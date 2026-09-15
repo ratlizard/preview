@@ -1,0 +1,1728 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Cythera, systemless, in the browser</title>
+<style>
+  /* The page is exactly as tall as the phone shows and never scrolls: the bar
+     takes what it needs, the game takes the rest, and nothing can end up
+     below the fold. `dvh` rather than `vh` because on iOS `100vh` is the
+     viewport with the browser's toolbars retracted -- taller than what is on
+     the screen while they are up -- which put the bottom of the game, the
+     character row among it, under the toolbar and out of reach. Keeping the
+     page unscrollable also keeps the toolbars up, so `dvh` stays put. */
+  html, body { margin: 0; background: #111; color: #ddd; font: 13px/1.4 system-ui, sans-serif; height: 100%; overscroll-behavior: none; }
+  body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  #bar { padding: 6px 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 0 0 auto; }
+  /* The bar's controls were browser-default buttons on a dark ground, which
+     read as an unfinished page rather than a quiet one. These are the same
+     controls, given the page's own colours. */
+  #bar button, #bar .linkbtn { font: inherit; color: #ddd; background: #232323; border: 1px solid #3a3a3a; border-radius: 7px; padding: 5px 11px; cursor: pointer; -webkit-appearance: none; appearance: none; line-height: 1.3; }
+  #bar .linkbtn { text-decoration: none; display: inline-block; }
+  #bar button:hover:not(:disabled), #bar .linkbtn:hover { background: #2d2d2d; border-color: #4c4c4c; }
+  #bar button:active:not(:disabled) { background: #383838; }
+  #bar button:disabled { opacity: .38; cursor: default; }
+  #bar button:focus-visible, #bar .linkbtn:focus-visible { outline: 2px solid #6a8fd0; outline-offset: 1px; }
+  /* Start is the one thing to press on an empty page, so it is the one
+     control that is coloured. It loses the colour once it becomes Restart. */
+  #bar button#play { background: #2f4a2f; border-color: #4a6b42; color: #eaf3e6; font-weight: 600; }
+  #bar button#play:hover:not(:disabled) { background: #395a37; }
+  #bar button#play.restart { background: #232323; border-color: #3a3a3a; color: #ddd; font-weight: inherit; }
+  #bar button#play.confirm { background: #5a2f2f; border-color: #7a4141; color: #f7e9e9; }
+  #stat { color: #9a9a9a; }
+  /* On a phone the bar's eight controls wrapped to two rows and took 76 px of
+     a 720 px screen away from the game. One row that scrolls sideways
+     instead: nothing is lost and the game keeps the height. */
+  @media (max-width: 700px) {
+    #bar { gap: 6px; padding: 6px 8px; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+    #bar::-webkit-scrollbar { display: none; }
+    #bar button, #bar .linkbtn, #bar label, #bar #stat { flex: 0 0 auto; white-space: nowrap; }
+    #bar button, #bar .linkbtn { padding: 5px 9px; }
+  }
+  /* The stage is whatever height is left, and the canvas is the stage. The
+     drawn picture is centred and letterboxed by object-fit, which is what
+     guestPoint's mapping already assumes. */
+  #stage { flex: 1 1 auto; min-height: 0; }
+  /* A drag out of the game's inventory bar is a press, a move and a release,
+     and iOS will take that gesture away as a text selection or a callout
+     unless it is told not to -- the pointer stream is cancelled part way and
+     the game sees a click rather than a drag. The pads say this for
+     themselves; the canvas never did. */
+  canvas { display: block; image-rendering: pixelated; width: 100%; height: 100%; object-fit: contain; touch-action: none; background: #000;
+           user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #log { white-space: pre-wrap; font: 11px/1.3 ui-monospace, monospace; padding: 4px 10px; max-height: 30vh; max-height: 30dvh; overflow: auto; flex: 0 1 auto; user-select: text; -webkit-user-select: text; }
+  body.playing #log { display: none; }
+  body.showlog #log { display: block !important; position: fixed; left: 0; right: 0; bottom: 0; max-height: 40vh; max-height: 40dvh; background: rgba(0,0,0,.85); z-index: 6; }
+  /* Copy sits on the log itself rather than in the bar, which on a phone is
+     already a row you have to swipe. */
+  #logcopy { display: none; }
+  body.showlog #logcopy { display: block; position: fixed; right: 10px; bottom: calc(40dvh + 10px); z-index: 7;
+    font: inherit; color: #ddd; background: #232323; border: 1px solid #3a3a3a; border-radius: 7px; padding: 5px 11px; -webkit-appearance: none; appearance: none; }
+  #stage { position: relative; }
+  /* The touch shell: shown only where the pointer is a finger. Two pads over
+     the bottom corners of the canvas; the game's control bar sits at the
+     bottom of its screen, so the pads are translucent and can be dragged by
+     their title to wherever the hand and the game agree. */
+  #hud { display: none; position: fixed; inset: 0; pointer-events: none; touch-action: none; }
+  body.playing.touch #hud { display: block; }
+  .pad { position: absolute; pointer-events: auto; background: rgba(20,20,20,.55); border: 1px solid rgba(255,255,255,.25); border-radius: 10px; padding: 4px; user-select: none; -webkit-user-select: none; backdrop-filter: blur(2px); }
+  .pad .title { font: 600 10px/1 system-ui, sans-serif; letter-spacing: .08em; color: #bbb; text-align: center; padding: 4px 0 6px; cursor: move; }
+  .grid { display: grid; gap: 4px; }
+  #move .grid { grid-template-columns: repeat(3, 52px); }
+  #act .grid { grid-template-columns: repeat(3, 58px); }
+  .k { height: 46px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: rgba(255,255,255,.14); color: #eee; font: 600 14px/1 system-ui, sans-serif; text-align: center; }
+  .k:active, .k.held { background: rgba(255,220,120,.6); color: #000; }
+  .k small { display: block; font-weight: 400; font-size: 10px; color: #bbb; margin-top: 2px; }
+  .k.held small, .k:active small { color: #333; }
+  #move { left: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); }
+  #act { right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); }
+  #kb { position: absolute; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
+  body.touch .desktop-only { display: none; }
+  #cheatpanel { position: fixed; left: 50%; top: 48px; transform: translateX(-50%); width: min(720px, 96vw); max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 10px; padding: 10px; z-index: 5; }
+  #cheatpanel .row { margin: 6px 0; } #cheatkeys .k { height: auto; padding: 8px 6px; flex-direction: column; font-size: 13px; }
+  #menupanel { position: fixed; left: 50%; top: 48px; transform: translateX(-50%); width: min(720px, 96vw); max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 10px; padding: 10px; z-index: 5; }
+  #menupanel .row { margin: 6px 0; } .dim { color: #999; font-size: 12px; }
+  #menus { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+  .menu { min-width: 150px; background: #262626; border-radius: 8px; padding: 6px; }
+  .menu h4 { margin: 0 0 6px; font-size: 13px; }
+  .menu button { display: block; width: 100%; text-align: left; margin: 2px 0; font: inherit; }
+  .menu button:disabled { opacity: .45; }
+  .menu hr { border: 0; border-top: 1px solid #444; margin: 4px 0; }
+  .menu .key { float: right; color: #999; }
+  #savespanel { position: fixed; left: 50%; top: 48px; transform: translateX(-50%); width: min(640px, 96vw); max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 10px; padding: 10px; z-index: 5; }
+  #savespanel .row { margin: 6px 0; }
+  #musicpanel, #patchpanel { position: fixed; left: 50%; top: 48px; transform: translateX(-50%); width: min(640px, 96vw); max-height: calc(100vh - 60px); max-height: calc(100dvh - 60px); overflow: auto; background: #1c1c1c; border: 1px solid #444; border-radius: 10px; padding: 10px; z-index: 5; }
+  #musicpanel .linkbtn { font: inherit; color: #ddd; background: #232323; border: 1px solid #3a3a3a; border-radius: 7px; padding: 5px 11px; text-decoration: none; display: inline-block; line-height: 1.3; }
+  #musicpanel .linkbtn:hover { background: #2d2d2d; border-color: #4c4c4c; }
+  #musicpanel .linkbtn[aria-disabled="true"] { opacity: .38; pointer-events: none; }
+  #musicpanel .row, #patchpanel .row { margin: 6px 0; } #musicpanel td, #musicpanel th, #patchpanel td, #patchpanel th { text-align: left; padding: 2px 10px 2px 0; } #musicsource { max-width: 70%; background: #111; color: #ddd; border: 1px solid #444; border-radius: 6px; padding: 6px; } #musicurl { width: 58%; background: #111; color: #ddd; border: 1px solid #444; border-radius: 6px; padding: 6px; }
+  #savestable { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #savestable td, #savestable th { padding: 4px 6px; border-top: 1px solid #333; text-align: left; }
+  #savestable button { font: inherit; }
+  #armed { position: fixed; top: 44px; left: 50%; transform: translateX(-50%); padding: 4px 10px; border-radius: 6px; background: rgba(255,220,120,.85); color: #000; font: 600 12px/1 system-ui, sans-serif; display: none; pointer-events: none; }
+</style>
+<div id="bar">
+  <button id="play" disabled>Play</button>
+  <button id="saves" disabled>Saves</button>
+  <button id="menubtn" disabled>Menu</button>
+  <button id="cheatbtn" disabled>Cheats</button>
+  <button id="musicbtn" disabled>Music</button>
+  <button id="patchbtn" disabled>Patches</button>
+  <button id="logbtn">Log</button>
+  <button id="bench" disabled class="desktop-only">Benchmark</button>
+  <label class="desktop-only"><input type="file" id="file"> pick a .sit</label>
+  <a id="grimoirelink" class="linkbtn" href="https://ratlizard.github.io/grimoire/" title="Cythera's data" target="_blank" rel="noopener">Grimoire</a>
+  <span id="stat">loading module…</span>
+</div>
+<div id="menupanel" hidden>
+  <div class="row"><b>Menus</b> <span class="dim">the game's own menu bar, which a finger cannot reach at the top of the screen</span> <button id="menuclose">Close</button></div>
+  <div id="menus"></div>
+</div>
+<div id="cheatpanel" hidden>
+  <div class="row"><b>Cheats</b> <span class="dim">the game's own cheat mode, read out of its executable</span> <button id="cheatclose">Close</button></div>
+  <div class="row" id="cheatstatus"></div>
+  <div class="row"><button id="cheatenable">Enable cheat mode in the preferences and reload</button> <span class="dim">sets bit 0 of the fourth byte of UI Prefs, which nothing in the game sets; the game reads it at launch</span></div>
+  <div class="row"><button id="cheatcode">Type the code (©gra)</button> <span class="dim">in the map window, with a game open; the log says "Cheat mode activated."</span></div>
+  <div class="row"><b>Cheat keys</b> <span class="dim">each is option plus a letter; the ones that ask a number read it from what you type next (Type button), in hex unless said</span></div>
+  <div id="cheatkeys" class="grid" style="grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));"></div>
+</div>
+<div id="savespanel" hidden>
+  <div class="row"><b>Saves</b> <span id="savesnote"></span> <button id="savesclose">Close</button></div>
+  <div class="row">Stored in this browser for this copy of the game, and written back to the game's disk when the page opens. <label><input type="checkbox" id="showall"> show the auto-save and settings</label></div>
+  <div class="row"><label><button id="importbtn">Import a character (.bin)</button><input type="file" id="importfile" accept=".bin,application/x-macbinary,application/octet-stream" hidden></label></div>
+  <table id="savestable"></table>
+</div>
+<div id="stage"><canvas id="screen" width="800" height="600"></canvas></div>
+<div id="armed"></div>
+<div id="hud">
+  <div class="pad" id="move">
+    <div class="title">MOVE</div>
+    <div class="grid">
+      <div class="k" data-key="Numpad7">&#8598;</div><div class="k" data-key="Numpad8">&#8593;</div><div class="k" data-key="Numpad9">&#8599;</div>
+      <div class="k" data-key="Numpad4">&#8592;</div><div class="k" data-key="Space">&#9203;<small>pass</small></div><div class="k" data-key="Numpad6">&#8594;</div>
+      <div class="k" data-key="Numpad1">&#8601;</div><div class="k" data-key="Numpad2">&#8595;</div><div class="k" data-key="Numpad3">&#8600;</div>
+    </div>
+  </div>
+  <div class="pad" id="act">
+    <div class="title">COMMANDS</div>
+    <div class="grid">
+      <div class="k" data-key="KeyG">Get<small>G</small></div><div class="k" data-key="KeyT">Talk<small>T</small></div><div class="k" data-key="KeyL">Look<small>L</small></div>
+      <div class="k" data-key="KeyU">Use<small>U</small></div><div class="k" data-key="KeyA">Attack<small>A</small></div><div class="k" data-key="KeyM">Move<small>M cancels</small></div>
+      <div class="k" data-key="Escape">Esc</div><div class="k" data-key="Enter">Return</div><div class="k" id="kbtoggle">Type<small>keyboard</small></div>
+    </div>
+  </div>
+</div>
+<input id="kb" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Type into the game">
+<div id="musicpanel" hidden>
+  <div class="row"><b>Music</b> <span id="musicnote" class="dim"></span> <button id="musicclose">Close</button></div>
+  <div class="row dim">Give it a zip, or files. Anything named <code>1A2B3C4D.mid</code> for the tune it replaces is taken at its word; anything else is put in track order and the first eleven become the game's eleven tunes. MIDI plays on the built-in instruments; recordings in any format this browser can decode are played as they are. The game still chooses which tune plays, when it starts and how loud it is. A tune already playing changes when it next starts.</div>
+  <div class="row"><label><button id="musicfilebtn">Choose a zip, .mid or .wav</button><input type="file" id="musicfile" accept=".zip,.mid,.midi,.wav" multiple hidden></label></div>
+  <div class="row"><select id="musicsource"></select> <a id="musicdownload" class="linkbtn" target="_blank" rel="noopener">Download</a> <button id="musicfetch">Fetch</button></div>
+  <div class="row"><input id="musicurl" type="url" placeholder="https://… any other zip"> <button id="musicload">Fetch</button></div>
+  <div class="row dim">cytheraguides.com does not allow another site to read its files, so Fetch fails there and there is nothing this page can do about it. <b>Download</b> opens the chosen set in a new tab; save it, then use <b>Choose a zip</b> above. Fetch is kept for a site that does allow it.</div>
+  <div class="row"><button id="musicclear">Remove all, and play the game's own music</button></div>
+  <div class="row"><table id="musictable"></table></div>
+</div>
+<div id="patchpanel" hidden>
+  <div class="row"><b>Patches</b> <span id="patchnote" class="dim"></span> <button id="patchclose">Close</button></div>
+  <div class="row dim">A <b>Magpie patch</b> is the one add-on Cythera has: a file holding replacement art and text, merged into the game's data before it boots. The only one published is the Pumpkin Patch, which puts jack-o’-lanterns and autumn trees in the world. Nothing is written to your copy of the game — the merge happens here, each time the page loads.</div>
+  <div class="row"><label><button id="patchfilebtn">Choose a patch file</button><input type="file" id="patchfile" hidden></label></div>
+  <div class="row dim">Give it the patch itself — the file inside a Magpie download's <code>Patches</code> folder. A <code>.hqx</code> or <code>.bin</code> wrapper around one is unwrapped here; a <code>.sit</code> is not, because its contents are compressed in a format this page does not read, so extract it first.</div>
+  <div class="row"><table id="patchtable"></table></div>
+</div>
+<div id="log"></div>
+<button id="logcopy">Copy log</button>
+<!-- grimoire's Delver format code, copied verbatim; see delv/README.md. Plain
+     scripts defining globals, in dependency order, before the page's own. -->
+<script src="delv/mac-bytes.js"></script>
+<script src="delv/mac-containers.js"></script>
+<script src="delv/mac-stuffit.js"></script>
+<script src="delv/delv-archive.js"></script>
+<script>
+'use strict';
+// KeyboardEvent.code -> Mac virtual key code, the desktop runner's table.
+const MAC_KEY = { KeyA:0x00,KeyS:0x01,KeyD:0x02,KeyF:0x03,KeyH:0x04,KeyG:0x05,KeyZ:0x06,KeyX:0x07,KeyC:0x08,KeyV:0x09,KeyB:0x0B,KeyQ:0x0C,KeyW:0x0D,KeyE:0x0E,KeyR:0x0F,KeyY:0x10,KeyT:0x11,Digit1:0x12,Digit2:0x13,Digit3:0x14,Digit4:0x15,Digit6:0x16,Digit5:0x17,Equal:0x18,Digit9:0x19,Digit7:0x1A,Minus:0x1B,Digit8:0x1C,Digit0:0x1D,BracketRight:0x1E,KeyO:0x1F,KeyU:0x20,BracketLeft:0x21,KeyI:0x22,KeyP:0x23,Enter:0x24,KeyL:0x25,KeyJ:0x26,Quote:0x27,KeyK:0x28,Semicolon:0x29,Backslash:0x2A,Comma:0x2B,Slash:0x2C,KeyN:0x2D,KeyM:0x2E,Period:0x2F,Tab:0x30,Space:0x31,Backquote:0x32,Backspace:0x33,Escape:0x35,MetaLeft:0x37,MetaRight:0x37,ShiftLeft:0x38,CapsLock:0x39,AltLeft:0x3A,ControlLeft:0x3B,ShiftRight:0x3C,AltRight:0x3D,ControlRight:0x3E,NumpadDecimal:0x41,NumpadMultiply:0x43,NumpadAdd:0x45,NumLock:0x47,NumpadDivide:0x4B,NumpadEnter:0x4C,NumpadSubtract:0x4E,NumpadEqual:0x51,Numpad0:0x52,Numpad1:0x53,Numpad2:0x54,Numpad3:0x55,Numpad4:0x56,Numpad5:0x57,Numpad6:0x58,Numpad7:0x59,Numpad8:0x5B,Numpad9:0x5C,ArrowLeft:0x7B,ArrowRight:0x7C,ArrowDown:0x7D,ArrowUp:0x7E,F1:0x7A,F2:0x78,F3:0x63,F4:0x76,F5:0x60 };
+const MAC_CHAR = { Enter:13,NumpadEnter:3,Tab:9,Space:32,Backspace:8,Escape:27,ArrowLeft:28,ArrowRight:29,ArrowUp:30,ArrowDown:31 };
+
+const logEl = document.getElementById('log'), statEl = document.getElementById('stat');
+function say(s) { logEl.textContent += s + '\n'; logEl.scrollTop = logEl.scrollHeight; console.log(s); }
+const dec = new TextDecoder();
+let wasm, mem;
+let logCalls = 0;
+const env = { cw_log(p, n) { logCalls++; say(dec.decode(new Uint8Array(mem.buffer, p, n))); } };
+// The module's heap, said once whenever it changes. A phone has far less room
+// than a desktop and growing a WebAssembly memory on one is not free, so if a
+// long frame lines up with a jump here that is the thing to chase.
+let heapSeen = 0;
+// A load grew the module's heap from 282 MB to 318 MB on the maintainer's
+// phone, and the frame it happened in took 34,642 ms for one 150,000
+// instruction slice -- 28 instructions a millisecond where this call measures
+// 54,000 a millisecond on a desktop. Growing is the suspect and this is the
+// experiment: reserve the headroom here, before play, and say how long it
+// took. If growing 64 MB costs tens of seconds then growth is the cost and
+// this has also moved it out of the game; if it is instant then growth is
+// innocent and the 150,000 instructions themselves are where to look next.
+function reserveHeap(mb) {
+  if (!mem || typeof mem.grow !== 'function') return;
+  const pages = Math.round(mb * 1048576 / 65536), t = performance.now();
+  try { mem.grow(pages); }
+  catch (e) { say(`memory: could not reserve ${mb} MB more (${e.message || e})`); return; }
+  say(`memory: reserved ${mb} MB more in ${(performance.now() - t).toFixed(0)} ms`);
+}
+function noteHeap() {
+  const mb = mem.buffer.byteLength >> 20;
+  if (mb === heapSeen) return mb;
+  say(heapSeen ? `memory: the module's heap grew to ${mb} MB from ${heapSeen}` : `memory: the module's heap is ${mb} MB`);
+  heapSeen = mb;
+  return mb;
+}
+window.addEventListener('error', e => say('error: ' + (e.message || e)));
+window.addEventListener('unhandledrejection', e => say('error: ' + (e.reason && e.reason.stack || e.reason)));
+
+// The workflow replaces __BUILD__ with the commit, so a cached module can
+// never be served with a newer page: the mismatch showed up as
+// "cw_menus is not a function" on a phone ten minutes after a deploy.
+const BUILD = '__BUILD__';
+const WASM_URL = 'cythera_web.wasm' + (BUILD.startsWith('__') ? '' : '?v=' + BUILD);
+async function loadWasm() {
+  const t0 = performance.now();
+  let r;
+  try {
+    r = await WebAssembly.instantiateStreaming(fetch(WASM_URL), { env });
+  } catch (e) {
+    // Safari without a wasm MIME type, or an old cache: fall back to bytes.
+    say(`streaming instantiate failed (${e.message}); loading as bytes`);
+    const bytes = await (await fetch(WASM_URL)).arrayBuffer();
+    r = await WebAssembly.instantiate(bytes, { env });
+  }
+  wasm = r.instance.exports; mem = wasm.memory;
+  wasm.cw_init();
+  say(`wasm loaded in ${(performance.now() - t0).toFixed(0)} ms, page build ${BUILD}`);
+  statEl.textContent = '';
+  for (const id of ['play', 'saves', 'bench', 'menubtn', 'cheatbtn', 'musicbtn', 'patchbtn']) document.getElementById(id).disabled = false;
+}
+const wasmReady = loadWasm().catch(e => { say('module failed to load: ' + e); statEl.textContent = 'module failed to load'; throw e; });
+// The game is not in this repository. A game.sit served beside the page wins
+// (a local checkout with a symlink to the installed-folder archive); otherwise
+// archive.org's "Cythera installers" item, the 28 MB StuffIt archive holding
+// the 1.0.1-1.0.4 installers, through the /cors/ path that sends the CORS
+// header. systemless expands the 1.0.4 Installer VISE payload itself.
+const GAME_SOURCES = [
+  'game.sit',
+  'https://archive.org/cors/cythera-installers/Cythera%20installers.sit',
+];
+let gameBytes = null, gameId = null;
+async function getGame() {
+  if (gameBytes) return gameBytes;
+  for (const url of GAME_SOURCES) {
+    const t0 = performance.now();
+    let res;
+    try { res = await fetch(url); } catch (e) { say(`${url}: ${e.message}`); continue; }
+    if (!res.ok) {
+      // `game.sit` beside the page is a symlink for the Node runners and is
+      // not deployed, so on the live site it is always missing. That is the
+      // normal path to archive.org, not a fault, and it used to read as one.
+      if (res.status === 404 && !/^https?:/.test(url)) say(`no ${url} beside the page; going to archive.org`);
+      else say(`${url}: ${res.status}`);
+      continue;
+    }
+    gameBytes = new Uint8Array(await res.arrayBuffer());
+    gameId = url.replace(/^https?:\/\//, '').replace(/[^A-Za-z0-9._-]+/g, '_');
+    say(`game fetched from ${url}: ${gameBytes.length} bytes in ${(performance.now() - t0).toFixed(0)} ms`);
+    return gameBytes;
+  }
+  throw new Error('no game source answered; pick a .sit with the file control');
+}
+document.getElementById('file').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  gameBytes = new Uint8Array(await f.arrayBuffer()); gameId = 'file_' + f.name.replace(/[^A-Za-z0-9._-]+/g, '_');
+  say(`picked ${f.name}: ${gameBytes.length} bytes`);
+});
+
+// The page is as tall as the phone shows, and this is the belt to the
+// stylesheet's braces. iOS reports `100vh` as the viewport with the browser's
+// toolbars retracted, taller than what is on the screen while they are up:
+// that is what put the bottom of the game under Chrome's toolbar. `100dvh` in
+// the stylesheet is the fix; this takes the smaller of that and innerHeight,
+// so a browser that gets either of them wrong still cannot leave part of the
+// game off the screen. innerHeight does not move when the keyboard opens on
+// iOS -- the keyboard shrinks the visual viewport, not the layout one -- so
+// the game does not resize under the Type button.
+function fitToViewport() {
+  // ... and not while the phone keyboard is up: a browser that does shrink
+  // the layout viewport for it would otherwise shrink the game to half the
+  // screen for as long as the Type button is in use.
+  if (document.activeElement === document.getElementById('kb')) return;
+  document.body.style.height = '';
+  const css = document.body.getBoundingClientRect().height || Infinity;
+  const h = Math.min(css, window.innerHeight || Infinity);
+  if (h > 0 && h < Infinity) document.body.style.height = h + 'px';
+}
+fitToViewport();
+window.addEventListener('resize', fitToViewport);
+window.addEventListener('orientationchange', () => setTimeout(fitToViewport, 120));
+
+const MAC_EPOCH_OFFSET = 2082844800;
+// Cythera's start screen is laid out for 640x480 and the game itself runs at
+// any larger size, its windows free to move. So: portrait keeps 640 wide and
+// fills the height, landscape keeps 480 high and fills the width, and the
+// canvas then covers the stage at the device's aspect. ?w=&h= overrides.
+// The space is measured rather than guessed at: the page is a column of the
+// bar and the stage, so what the game gets is the page's height less the
+// bar's, and a guest screen of that aspect is drawn with no letterbox and
+// nothing cut off. Subtracting a nominal 40 px bar instead -- which this did
+// -- was wrong by however much the bar's real height differed, and on a
+// phone the bar was 76. The log is not measured because play hides it.
+function chooseScreen() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('w') && q.get('h')) return [Math.max(640, +q.get('w')), Math.max(480, +q.get('h'))];
+  const body = document.body.getBoundingClientRect(), bar = document.getElementById('bar').getBoundingClientRect();
+  const vw = Math.max(1, Math.round(body.width)), vh = Math.max(1, Math.round(body.height - bar.height));
+  if (vh >= vw) return [640, Math.min(2048, Math.max(480, Math.round(640 * vh / vw)))];
+  return [Math.min(2048, Math.max(640, Math.round(480 * vw / vh))), 480];
+}
+let booted = false, W = 0, H = 0, canvas = document.getElementById('screen'), ctx = canvas.getContext('2d');
+let bootPromise = null;
+function boot() { return bootPromise || (bootPromise = bootOnce().catch(e => { bootPromise = null; throw e; })); }
+async function bootOnce() {
+  await wasmReady;
+  statEl.textContent = 'fetching the game…';
+  const bytes = await getGame();
+  statEl.textContent = 'booting…';
+  await new Promise(r => setTimeout(r, 0)); // let the status paint
+  noteHeap();
+  const p = wasm.cw_alloc(bytes.length);
+  new Uint8Array(mem.buffer, p, bytes.length).set(bytes);
+  gameBytes = null; // the module owns the only copy now
+  noteHeap();
+  const t0 = performance.now();
+  const [sw, sh] = chooseScreen();
+  const rc = wasm.cw_load(p, bytes.length, Math.floor(Date.now() / 1000) + MAC_EPOCH_OFFSET, sw, sh);
+  if (rc !== 0) throw new Error(dec.decode(new Uint8Array(mem.buffer, wasm.cw_error_ptr(), wasm.cw_error_len())));
+  noteHeap();
+  const restored = await restoreSaves();
+  const tunes = await restoreMusic();
+  const patched = await applyPatches();
+  wasm.cw_start();
+  W = wasm.cw_width(); H = wasm.cw_height();
+  canvas.width = W; canvas.height = H;
+  say(`booted in ${(performance.now() - t0).toFixed(0)} ms, screen ${W}x${H}, ${wasm.cw_instructions_per_tick()} instructions/tick, ${restored} save file(s) restored` + (tunes ? `, ${tunes} substitute tune(s) installed` : '') + (patched ? `, ${patched} patch(es) applied` : ''));
+  statEl.textContent = '';
+  noteHeap();
+  reserveHeap(64);
+  noteHeap();
+  booted = true;
+}
+
+// --- saves: IndexedDB, one record per file of the game's disk that the
+// guest created or changed, keyed by game and path. Restored between load
+// and start so the game finds them where it left them; scanned every two
+// seconds while playing and on the way out of the page. Forks are stored as
+// bytes, not base64. The type codes classify the list: DelP is a character,
+// Temp the auto-save and custom data, pref the settings.
+const SAVE_DB = 'cythera-saves';
+let dbPromise = null;
+function db() {
+  return dbPromise || (dbPromise = new Promise((resolve, reject) => {
+    // Version 2 added the music store and version 3 the patch store. The
+    // upgrade creates whichever stores are missing, so a browser holding an
+    // older database keeps what is in it.
+    const req = indexedDB.open(SAVE_DB, 3);
+    req.onupgradeneeded = () => {
+      const d = req.result;
+      if (!d.objectStoreNames.contains('files')) {
+        d.createObjectStore('files', { keyPath: 'key' }).createIndex('game', 'game');
+      }
+      if (!d.objectStoreNames.contains('music')) {
+        d.createObjectStore('music', { keyPath: 'key' }).createIndex('game', 'game');
+      }
+      if (!d.objectStoreNames.contains('patches')) {
+        d.createObjectStore('patches', { keyPath: 'key' }).createIndex('game', 'game');
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+function idbMusic(mode, fn) {
+  return db().then(d => new Promise((resolve, reject) => {
+    const tx = d.transaction('music', mode), st = tx.objectStore('music');
+    const out = fn(st);
+    tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function idbPatch(mode, fn) {
+  return db().then(d => new Promise((resolve, reject) => {
+    const tx = d.transaction('patches', mode), st = tx.objectStore('patches');
+    const out = fn(st);
+    tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function idb(mode, fn) {
+  return db().then(d => new Promise((resolve, reject) => {
+    const tx = d.transaction('files', mode), st = tx.objectStore('files');
+    const out = fn(st);
+    tx.oncomplete = () => resolve(out && out.result !== undefined ? out.result : out);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+function listSaves() { return idb('readonly', st => st.index('game').getAll(gameId)); }
+function putSave(rec) { rec.key = gameId + '\u0000' + rec.path; rec.game = gameId; return idb('readwrite', st => st.put(rec)); }
+function deleteSave(path) { return idb('readwrite', st => st.delete(gameId + '\u0000' + path)); }
+try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+
+function allocBytes(u8) { const p = wasm.cw_alloc(u8.length); new Uint8Array(mem.buffer, p, u8.length).set(u8); return p; }
+function importRecord(rec) {
+  const path = new TextEncoder().encode(rec.path);
+  const pp = allocBytes(path), dp = rec.data.length ? allocBytes(rec.data) : 0, rp = rec.rsrc.length ? allocBytes(rec.rsrc) : 0;
+  return wasm.cw_import(pp, path.length, rec.type, rec.creator, rec.flags, rec.created, rec.modified, dp, rec.data.length, rp, rec.rsrc.length);
+}
+async function restoreSaves() {
+  let recs = [];
+  try { recs = await listSaves(); } catch (e) { say('saves: could not open the store: ' + e); return 0; }
+  for (const rec of recs) importRecord(rec);
+  return recs.length;
+}
+let syncing = false;
+async function syncSaves() {
+  if (!booted || syncing) return;
+  const n = wasm.cw_save_scan();
+  if (!n) return;
+  syncing = true;
+  const recs = [];
+  for (let i = 0; i < n; i++) {
+    const path = dec.decode(new Uint8Array(mem.buffer, wasm.cw_save_path_ptr(i), wasm.cw_save_path_len(i)));
+    recs.push({
+      path, type: wasm.cw_save_type(i), creator: wasm.cw_save_creator(i), flags: wasm.cw_save_flags(i),
+      created: wasm.cw_save_created(i), modified: wasm.cw_save_modified(i),
+      data: new Uint8Array(mem.buffer, wasm.cw_save_data_ptr(i), wasm.cw_save_data_len(i)).slice(),
+      rsrc: new Uint8Array(mem.buffer, wasm.cw_save_rsrc_ptr(i), wasm.cw_save_rsrc_len(i)).slice(),
+      savedAt: Date.now(),
+    });
+  }
+  wasm.cw_save_ack();
+  try { for (const rec of recs) await putSave(rec); say(`saves: stored ${recs.map(r => r.path.split('/').pop()).join(', ')}`); }
+  catch (e) { say('saves: store failed: ' + e); }
+  syncing = false;
+}
+const saveTimer = setInterval(syncSaves, 2000);
+document.addEventListener('visibilitychange', () => { if (document.hidden) syncSaves(); });
+window.addEventListener('pagehide', syncSaves);
+
+// MacBinary II: one file carrying both forks and the Finder info, which is
+// what a character file needs to survive a trip through mail or Files.
+function crc16(bytes) { let c = 0; for (const b of bytes) { c ^= b << 8; for (let i = 0; i < 8; i++) c = (c & 0x8000) ? ((c << 1) ^ 0x1021) & 0xffff : (c << 1) & 0xffff; } return c; }
+function fourcc(n) { return String.fromCharCode(n >>> 24 & 255, n >>> 16 & 255, n >>> 8 & 255, n & 255); }
+function toMacBinary(rec) {
+  const name = new TextEncoder().encode(rec.path.split('/').pop()).slice(0, 63);
+  const pad = n => (n + 127) & ~127;
+  const out = new Uint8Array(128 + pad(rec.data.length) + pad(rec.rsrc.length));
+  const dv = new DataView(out.buffer);
+  out[1] = name.length; out.set(name, 2);
+  dv.setUint32(65, rec.type); dv.setUint32(69, rec.creator);
+  out[73] = rec.flags >> 8 & 255; out[101] = rec.flags & 255;
+  dv.setUint32(83, rec.data.length); dv.setUint32(87, rec.rsrc.length);
+  dv.setUint32(91, rec.created); dv.setUint32(95, rec.modified);
+  out[122] = 129; out[123] = 129;
+  dv.setUint16(124, crc16(out.subarray(0, 124)));
+  out.set(rec.data, 128); out.set(rec.rsrc, 128 + pad(rec.data.length));
+  return out;
+}
+function fromMacBinary(u8) {
+  if (u8.length < 128 || u8[0] !== 0 || u8[74] !== 0 || u8[82] !== 0 || u8[1] < 1 || u8[1] > 63) throw new Error('not a MacBinary file');
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const name = dec.decode(u8.subarray(2, 2 + u8[1]));
+  const dataLen = dv.getUint32(83), rsrcLen = dv.getUint32(87);
+  const pad = n => (n + 127) & ~127;
+  const data = u8.slice(128, 128 + dataLen), rsrc = u8.slice(128 + pad(dataLen), 128 + pad(dataLen) + rsrcLen);
+  return { name, type: dv.getUint32(65), creator: dv.getUint32(69), flags: (u8[73] << 8) | u8[101], created: dv.getUint32(91), modified: dv.getUint32(95), data, rsrc };
+}
+function gameFolder() {
+  const n = new TextEncoder().encode('Cythera Data');
+  const p = allocBytes(n); const ok = wasm.cw_vfs_find(p, n.length); wasm.cw_free(p, n.length);
+  if (!ok) return 'Cythera 1.0.4 ƒ/';
+  const full = dec.decode(new Uint8Array(mem.buffer, wasm.cw_found_ptr(), wasm.cw_found_len()));
+  return full.slice(0, full.lastIndexOf('/') + 1);
+}
+function macDate(secs) { return secs ? new Date((secs - MAC_EPOCH_OFFSET) * 1000).toLocaleString() : ''; }
+function kindOf(rec) { const t = fourcc(rec.type); return t === 'DelP' ? 'character' : t === 'Temp' ? 'auto-save / custom data' : t === 'pref' ? 'settings' : t; }
+const panel = document.getElementById('savespanel'), table = document.getElementById('savestable');
+async function renderSaves() {
+  let recs = [];
+  try { recs = await listSaves(); } catch (e) { document.getElementById('savesnote').textContent = 'store unavailable: ' + e; }
+  const all = document.getElementById('showall').checked;
+  const shown = recs.filter(r => all || fourcc(r.type) === 'DelP').sort((a, b) => b.modified - a.modified);
+  document.getElementById('savesnote').textContent = gameId ? `${recs.length} file(s) for ${gameId}` : 'no game loaded yet';
+  table.innerHTML = '<tr><th>name</th><th>kind</th><th>size</th><th>modified</th><th></th></tr>' + shown.map((r, i) =>
+    `<tr><td>${r.path.split('/').pop().replace(/</g, '&lt;')}</td><td>${kindOf(r)}</td><td>${(r.data.length + r.rsrc.length).toLocaleString()} B</td><td>${macDate(r.modified)}</td><td><button data-i="${i}" data-act="export">Export</button> <button data-i="${i}" data-act="delete">Delete</button></td></tr>`).join('');
+  table.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const rec = shown[+b.dataset.i];
+    if (b.dataset.act === 'export') {
+      const blob = new Blob([toMacBinary(rec)], { type: 'application/x-macbinary' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = rec.path.split('/').pop() + '.bin'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } else if (confirm(`Delete the stored copy of ${rec.path.split('/').pop()}? The running game keeps its own until the page reloads.`)) {
+      await deleteSave(rec.path); renderSaves();
+    }
+  };
+}
+// --- cheats. Cythera's map window keeps the last four typed bytes; when they
+// read ©gra and bit 0 of byte 3 of the four-byte 'Pref' 130 "UI Prefs"
+// record is set, cheat mode toggles. Nothing in the game sets that bit, so
+// the page sets it in the stored preference file (a resource fork) and
+// reloads; the game reads preferences at launch. The keys are option plus a
+// letter, matched on the Mac Roman character the option key produces on a
+// US layout, so each is sent as that character with the option key held.
+function resourceForkFind(u8, type, id) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  if (u8.length < 16) return null;
+  const dataOff = dv.getUint32(0), mapOff = dv.getUint32(4);
+  if (mapOff + 28 > u8.length) return null;
+  const typeList = mapOff + dv.getUint16(mapOff + 24);
+  const nTypes = dv.getInt16(typeList) + 1;
+  for (let i = 0; i < nTypes; i++) {
+    const e = typeList + 2 + i * 8;
+    const t = String.fromCharCode(u8[e], u8[e + 1], u8[e + 2], u8[e + 3]);
+    if (t !== type) continue;
+    const count = dv.getInt16(e + 4) + 1, refs = typeList + dv.getUint16(e + 6);
+    for (let j = 0; j < count; j++) {
+      const r = refs + j * 12;
+      if (dv.getInt16(r) !== id) continue;
+      const off = dataOff + (dv.getUint32(r + 4) & 0xffffff);
+      const len = dv.getUint32(off);
+      return { offset: off + 4, length: len };
+    }
+  }
+  return null;
+}
+async function prefsRecord() {
+  const recs = await listSaves();
+  return recs.find(r => /\/Cythera Preferences$/.test(r.path)) || null;
+}
+// --- music: a tune library, without a directory to keep it in
+//
+// The fork plays a substitute for a tune when one is installed for that
+// tune's checksum, which on the desktop is a directory named by
+// SYSTEMLESS_TUNE_LIBRARY holding 1A2B3C4D.mid and 1A2B3C4D.wav. A browser
+// has no directory, so the page unpacks a zip and hands the module each file
+// by checksum, and keeps them so the next visit still has them.
+// The game's eleven tunes, in the order they sit in its data file
+// (resources 0x9000..0x900A), with the checksum each one's stream hashes to.
+// The fork keys substitutes by that checksum and knows nothing about Cythera;
+// this table is the Cythera-specific half, and it lives here for that reason.
+// Recomputed with the tune-library script in the disassembly toolkit if a
+// different build of the game ever turns up.
+const GAME_TUNES = [
+  { sum: 0xFB7C80EC, name: 'Cythera Theme' },
+  { sum: 0x240F243E, name: 'Land King Hall' },
+  { sum: 0xE94682D2, name: 'Underground' },
+  { sum: 0xFEF48D9E, name: 'Overworld' },
+  { sum: 0xCECF1A14, name: 'Odemia' },
+  { sum: 0x9F5C06AC, name: 'Danger' },
+  { sum: 0xB403356D, name: 'Seldane' },
+  { sum: 0x464CFCB1, name: 'Pnyx' },
+  { sum: 0xD20743D9, name: 'Catamarca' },
+  { sum: 0x5B214860, name: 'Cademia' },
+  { sum: 0x7C7452F8, name: 'Kosha' },
+];
+// What the guides site publishes. Fetching any of them needs the site to
+// allow cross-origin reads; if it does not, the browser refuses and the file
+// picker below is the way in. The MIDI set is the small one and the one this
+// host reads without converting anything.
+const MUSIC_SOURCES = [
+  { label: 'Volume I — MIDI sources (small, plays on the built-in instruments)',
+    url: 'https://cytheraguides.com/soundtrack/sources/cythera20_vol1_midis.zip' },
+  { label: 'Volume I — recordings, lossless',
+    url: 'https://cytheraguides.com/soundtrack/music/lossless/cythera20_vol1.zip' },
+  { label: 'Volume II — recordings, lossless',
+    url: 'https://cytheraguides.com/soundtrack/music/lossless/cythera20_vol2.zip' },
+  { label: 'Both volumes — recordings',
+    url: 'https://cytheraguides.com/soundtrack/cythera20.zip' },
+];
+
+const MUSIC_NAME = /(?:^|\/)([0-9A-Fa-f]{8})\.(mid|midi|wav)$/;
+const MUSIC_ANY = /\.(mid|midi|wav|m4a|mp3|aif|aiff|flac|ogg|caf|aac)$/i;
+function listMusic() { return idbMusic('readonly', st => st.index('game').getAll(gameId)); }
+function putMusic(rec) { rec.key = gameId + ' ' + rec.checksum; rec.game = gameId; return idbMusic('readwrite', st => st.put(rec)); }
+function clearMusicStore() {
+  return listMusic().then(recs => idbMusic('readwrite', st => { for (const r of recs) st.delete(r.key); }));
+}
+
+// Enough of a zip reader for a folder of files: find the end-of-central-
+// directory record, walk the central directory, and take each entry either
+// stored or deflated. DecompressionStream does the inflating, so there is no
+// library to load. Zip64 and encrypted entries are not handled; entries that
+// cannot be unpacked are counted and reported rather than guessed at.
+async function inflateRaw(raw) {
+  if (typeof DecompressionStream === 'undefined') return null;
+  const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+async function unzip(buf) {
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= 0 && i > buf.length - 22 - 65536; i--) {
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) return null;
+  const count = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true), out = [], skipped = 0;
+  for (let n = 0; n < count && p + 46 <= buf.length; n++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nameLen = dv.getUint16(p + 28, true), extraLen = dv.getUint16(p + 30, true);
+    const commentLen = dv.getUint16(p + 32, true), local = dv.getUint32(p + 42, true);
+    const name = dec.decode(buf.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    if (!MUSIC_ANY.test(name) || /(^|\/)__MACOSX\//.test(name)) continue;
+    if (dv.getUint32(local, true) !== 0x04034b50) { skipped++; continue; }
+    const start = local + 30 + dv.getUint16(local + 26, true) + dv.getUint16(local + 28, true);
+    const raw = buf.subarray(start, start + csize);
+    let bytes = null;
+    if (method === 0) bytes = raw.slice();
+    else if (method === 8) bytes = await inflateRaw(raw);
+    if (bytes) out.push({ name, bytes }); else skipped++;
+  }
+  if (skipped) say(`music: ${skipped} entr${skipped === 1 ? 'y' : 'ies'} in the zip could not be unpacked`);
+  return out;
+}
+
+// "10" after "9", not before it, so a numbered set of tracks lands in the
+// order a person would read it in.
+function naturalOrder(a, b) {
+  return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+// Anything the browser can decode becomes what the host can play: 8-bit PCM,
+// which is what the Sound Manager channels take and what the game's own audio
+// already is, so nothing is lost by going down to it. This is what makes the
+// site's m4a and flac usable at all -- the host reads uncompressed PCM and
+// Standard MIDI, and neither of those is either.
+async function toPcmWav(bytes) {
+  if (typeof OfflineAudioContext === 'undefined' && typeof webkitOfflineAudioContext === 'undefined') return null;
+  const Ctx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  let audio;
+  try {
+    const ctx = new Ctx(1, 1, 22050);
+    audio = await ctx.decodeAudioData(bytes.slice().buffer);
+  } catch (e) { return null; }
+  const rate = Math.round(audio.sampleRate);
+  const n = audio.length;
+  const chans = [];
+  for (let c = 0; c < audio.numberOfChannels; c++) chans.push(audio.getChannelData(c));
+  const wav = new Uint8Array(44 + n);
+  const dv = new DataView(wav.buffer);
+  const tag = (at, s) => { for (let i = 0; i < s.length; i++) wav[at + i] = s.charCodeAt(i); };
+  tag(0, 'RIFF'); dv.setUint32(4, 36 + n, true); tag(8, 'WAVE');
+  tag(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate, true); dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);
+  tag(36, 'data'); dv.setUint32(40, n, true);
+  for (let i = 0; i < n; i++) {
+    let v = 0;
+    for (const ch of chans) v += ch[i];
+    v /= chans.length;
+    wav[44 + i] = Math.max(0, Math.min(255, Math.round(v * 127) + 128));
+  }
+  return wav;
+}
+
+// Hand one file to the module and keep it. The module reads the kind from the
+// bytes, so the name only has to say which tune it is for.
+async function installMusicFile(checksum, label, bytes, store) {
+  let payload = bytes;
+  if (!(bytes[0] === 0x4D && bytes[1] === 0x54) && !(bytes[0] === 0x52 && bytes[1] === 0x49)) {
+    const pcm = await toPcmWav(bytes);
+    if (!pcm) return 0;
+    payload = pcm;
+  }
+  const kind = wasm.cw_tune_install(checksum, allocBytes(payload), payload.length);
+  if (store && kind) {
+    try { await putMusic({ checksum, name: label, kind, bytes: payload }); }
+    catch (e) { say('music: could not store ' + label + ': ' + e); }
+  }
+  return kind;
+}
+
+// Files named for their tune are taken at their word. Anything else is put in
+// order -- the way the tracks are numbered, which is the order the game keeps
+// its tunes in -- and the first eleven become the eleven tunes. The log says
+// what went where, because the guess is only as good as the naming.
+async function installMusicFiles(files) {
+  const named = [], rest = [];
+  for (const f of files) (MUSIC_NAME.test(f.name) ? named : rest).push(f);
+  rest.sort(naturalOrder);
+  const jobs = named.map(f => ({
+    sum: parseInt(f.name.match(MUSIC_NAME)[1], 16),
+    label: f.name.split('/').pop(),
+    bytes: f.bytes,
+    by: 'name',
+  }));
+  rest.slice(0, GAME_TUNES.length).forEach((f, i) => jobs.push({
+    sum: GAME_TUNES[i].sum, label: f.name.split('/').pop(), bytes: f.bytes, by: GAME_TUNES[i].name,
+  }));
+  if (rest.length > GAME_TUNES.length) {
+    say(`music: ${rest.length} files for ${GAME_TUNES.length} tunes; took the first ${GAME_TUNES.length} in order`);
+  }
+  let midi = 0, rec = 0, bad = 0;
+  for (const job of jobs) {
+    const kind = await installMusicFile(job.sum, job.label, job.bytes, true);
+    if (kind === 1) midi++; else if (kind === 2) rec++; else bad++;
+    if (job.by !== 'name') say(`music: ${job.label} → ${job.by}${kind ? '' : ' (could not be read)'}`);
+  }
+  const parts = [];
+  if (midi) parts.push(`${midi} MIDI`);
+  if (rec) parts.push(`${rec} recording${rec === 1 ? '' : 's'}`);
+  if (bad) parts.push(`${bad} this host cannot read`);
+  say('music: ' + (parts.length ? parts.join(', ') : 'nothing usable') + `; ${wasm.cw_tune_count()} installed`);
+  renderMusic();
+}
+
+// A zip, or a single file.
+async function acceptMusicBytes(name, bytes) {
+  if (/\.zip$/i.test(name) || (bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4B)) {
+    say('music: unpacking…');
+    const entries = await unzip(bytes);
+    if (!entries) { say('music: that does not look like a zip'); return; }
+    if (!entries.length) { say('music: no music in the zip that this host could use'); return; }
+    await installMusicFiles(entries);
+    return;
+  }
+  await installMusicFiles([{ name, bytes }]);
+}
+
+async function restoreMusic() {
+  let recs = [];
+  try { recs = await listMusic(); } catch (e) { return 0; }
+  for (const r of recs) wasm.cw_tune_install(r.checksum, allocBytes(r.bytes), r.bytes.length);
+  return recs.length;
+}
+
+// --- patches. A Magpie patch is a Delver Archive holding the resources to
+// replace, and Cythera has no folder to drop one in: nothing in the game reads
+// one. The merge happens here instead, between cw_load and cw_start, so the
+// game boots from a patched archive and the packaged copy is never touched.
+// mergeDelverPatch is grimoire's; see delv/README.md.
+//
+// The merge re-serializes all 5.6 MB, and that is the only way: the resources
+// a patch supplies are different lengths from the ones they replace, so
+// nothing can be written in place.
+function listPatches() { return idbPatch('readonly', st => st.index('game').getAll(gameId)); }
+function putPatch(rec) { rec.key = gameId + '\0' + rec.name; rec.game = gameId; return idbPatch('readwrite', st => st.put(rec)); }
+function deletePatch(name) { return idbPatch('readwrite', st => st.delete(gameId + '\0' + name)); }
+
+function findPath(name) {
+  const n = new TextEncoder().encode(name);
+  const p = allocBytes(n); const ok = wasm.cw_vfs_find(p, n.length); wasm.cw_free(p, n.length);
+  return ok ? dec.decode(new Uint8Array(mem.buffer, wasm.cw_found_ptr(), wasm.cw_found_len())) : null;
+}
+// Both forks of a file already on the disk. Each view is sliced before the
+// next module call, because a wasm memory growth detaches the old buffer.
+function stageFile(path) {
+  const n = new TextEncoder().encode(path);
+  const p = allocBytes(n); const ok = wasm.cw_vfs_stage(p, n.length); wasm.cw_free(p, n.length);
+  if (!ok) return null;
+  const rec = { path, type: wasm.cw_staged_type(), creator: wasm.cw_staged_creator(),
+                flags: wasm.cw_staged_flags(), created: wasm.cw_staged_created(),
+                modified: wasm.cw_staged_modified() };
+  rec.data = new Uint8Array(mem.buffer, wasm.cw_staged_data_ptr(), wasm.cw_staged_data_len()).slice();
+  rec.rsrc = new Uint8Array(mem.buffer, wasm.cw_staged_rsrc_ptr(), wasm.cw_staged_rsrc_len()).slice();
+  wasm.cw_staged_clear();
+  return rec;
+}
+
+// A patch travels as the bare file, or inside one wrapper, or inside two: the
+// one published patch is distributed as a .hqx wrapping a .sit. So unwrap
+// until what is left is not a wrapper, and test for StuffIt at every layer --
+// checking only the outside would answer "that is not a Delver Archive" for
+// the exact file most people will pick. Returns {name, bytes}, or throws with
+// something a person can act on.
+function unwrapPatch(fileName, u8) {
+  let name = fileName, bytes = u8;
+  for (let layer = 0; layer < 4; layer++) {
+    if (looksLikeStuffIt(bytes)) {
+      let listed = '';
+      try {
+        const names = parseStuffItArchive(bytes).entries.filter(e => !e.isFolder).map(e => e.path);
+        if (names.length) listed = ' It holds ' + names.map(n => '"' + n + '"').join(', ') + '.';
+      } catch (e) {}
+      throw new Error(name + ' is a StuffIt archive, and this page cannot decompress one.' +
+                      listed + ' Extract it and choose the patch file itself.');
+    }
+    if (looksLikeBinHex(bytes)) {
+      const f = binhexSplitForks(binhexDecode(bytes));
+      name = f.name; bytes = f.data; continue;
+    }
+    const mb = macBinaryForks(bytes);
+    if (mb) { name = mb.name; bytes = mb.data; continue; }
+    break;
+  }
+  return { name, bytes };
+}
+
+// Apply every stored patch to the archive on the disk. Called between cw_load
+// and cw_start; anything that fails is reported and skipped, because a patch
+// that stops working must not stop the game booting.
+async function applyPatches() {
+  let recs = [];
+  try { recs = await listPatches(); } catch (e) { return 0; }
+  if (!recs.length) return 0;
+  const path = findPath('Cythera Data');
+  if (!path) { say('patches: Cythera Data is not on the disk'); return 0; }
+  const base = stageFile(path);
+  if (!base) { say('patches: could not read ' + path); return 0; }
+  let bytes = base.data, applied = 0;
+  for (const r of recs) {
+    try {
+      const m = mergeDelverPatch(bytes, r.bytes);
+      bytes = m.bytes; applied++;
+      say(`patch ${r.name}: ${m.replaced.length} resource(s) replaced` +
+          (m.skipped.length ? `, ${m.skipped.length} not in the archive` : '') +
+          (m.disagreed.length ? `, ${m.disagreed.length} refused` : ''));
+    } catch (e) {
+      say(`patch ${r.name} was not applied: ${e.message}`);
+    }
+  }
+  if (!applied) return 0;
+  // cw_import records the fingerprint as already stored, so the save scan does
+  // not offer the 5.6 MB archive to IndexedDB as if the guest had written it.
+  importRecord({ path, type: base.type, creator: base.creator, flags: base.flags,
+                 created: base.created, modified: base.modified, data: bytes, rsrc: base.rsrc });
+  return applied;
+}
+
+const patchPanel = document.getElementById('patchpanel'), patchTable = document.getElementById('patchtable');
+async function renderPatches() {
+  let recs = [];
+  try { recs = await listPatches(); } catch (e) {}
+  document.getElementById('patchnote').textContent =
+    recs.length ? `${recs.length} patch${recs.length > 1 ? 'es' : ''}, applied at every load` : 'the game is unpatched';
+  patchTable.innerHTML = recs.length
+    ? '<tr><th>name</th><th>replaces</th><th>size</th><th></th></tr>' + recs.map((r, i) =>
+        `<tr><td>${r.name.replace(/</g, '&lt;')}</td><td>${r.replaced} resource(s)</td><td>${r.bytes.length.toLocaleString()} B</td><td><button data-i="${i}">Remove</button></td></tr>`).join('')
+    : '';
+  patchTable.onclick = async e => {
+    const b = e.target.closest('button'); if (!b) return;
+    await deletePatch(recs[+b.dataset.i].name);
+    renderPatches();
+    if (confirm('Removed. Reload the page to play the game unpatched?')) location.reload();
+  };
+}
+document.getElementById('patchbtn').onclick = () => { patchPanel.hidden = !patchPanel.hidden; if (!patchPanel.hidden) renderPatches(); };
+document.getElementById('patchclose').onclick = () => patchPanel.hidden = true;
+document.getElementById('patchfilebtn').onclick = () => document.getElementById('patchfile').click();
+document.getElementById('patchfile').onchange = async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const note = document.getElementById('patchnote');
+  try {
+    await boot();
+    const raw = new Uint8Array(await file.arrayBuffer());
+    const unwrapped = unwrapPatch(file.name, raw);
+    // Merge once now, against the archive as loaded, so a file that cannot
+    // work says so here rather than silently at the next load.
+    const path = findPath('Cythera Data');
+    if (!path) throw new Error('Cythera Data is not on the disk');
+    const base = stageFile(path);
+    if (!base) throw new Error('could not read ' + path);
+    const m = mergeDelverPatch(base.data, unwrapped.bytes);
+    await putPatch({ name: unwrapped.name, bytes: unwrapped.bytes, replaced: m.replaced.length });
+    note.textContent = '';
+    renderPatches();
+    if (confirm(`${unwrapped.name} replaces ${m.replaced.length} resource(s). Reload the page to play with it?`)) location.reload();
+  } catch (err) {
+    note.textContent = String(err.message || err);
+    say('patch not added: ' + (err.message || err));
+  }
+};
+
+const musicPanel = document.getElementById('musicpanel'), musicTable = document.getElementById('musictable');
+async function renderMusic() {
+  const note = document.getElementById('musicnote');
+  let recs = [];
+  try { recs = await listMusic(); } catch (e) {}
+  const by = new Map(recs.map(r => [r.checksum >>> 0, r]));
+  note.textContent = recs.length ? `${recs.length} of ${GAME_TUNES.length} tunes replaced` : 'the game plays its own music';
+  const kindName = k => k === 2 ? 'recording' : k === 1 ? 'MIDI' : '';
+  musicTable.innerHTML = '<tr><th>Tune</th><th>Playing</th><th>Kind</th></tr>' + GAME_TUNES.map(t => {
+    const r = by.get(t.sum >>> 0);
+    return `<tr><td>${t.name}</td><td>${r ? r.name.replace(/</g, '&lt;') : '<span class="dim">the game’s own</span>'}</td><td>${r ? kindName(r.kind) : ''}</td></tr>`;
+  }).join('');
+}
+document.getElementById('musicbtn').onclick = () => { musicPanel.hidden = !musicPanel.hidden; if (!musicPanel.hidden) renderMusic(); };
+document.getElementById('musicclose').onclick = () => musicPanel.hidden = true;
+document.getElementById('musicfilebtn').onclick = () => document.getElementById('musicfile').click();
+document.getElementById('musicfile').onchange = async e => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (files.length === 1) await acceptMusicBytes(files[0].name, new Uint8Array(await files[0].arrayBuffer()));
+  else if (files.length) {
+    const entries = [];
+    for (const f of files) entries.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+    await installMusicFiles(entries);
+  }
+};
+async function fetchMusic(url) {
+  if (!url) return;
+  say('music: fetching ' + url);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) { say(`music: the server answered ${res.status}`); return; }
+    await acceptMusicBytes(url.split('/').pop() || 'download.zip', new Uint8Array(await res.arrayBuffer()));
+  } catch (e) {
+    say('music: could not fetch it (' + e.message + '). The site has to allow cross-origin reads; if it does not, download the zip and choose it below.');
+  }
+}
+document.getElementById('musicload').onclick = () => fetchMusic(document.getElementById('musicurl').value.trim());
+{
+  const sel = document.getElementById('musicsource'), dl = document.getElementById('musicdownload');
+  sel.innerHTML = '<option value="">Choose a published set…</option>' +
+    MUSIC_SOURCES.map(s => `<option value="${s.url}">${s.label}</option>`).join('');
+  // Fetching these is refused by the site that publishes them, so the link is
+  // the route that works: download it, then choose the file.
+  const syncLink = () => {
+    dl.href = sel.value || '#';
+    dl.setAttribute('aria-disabled', sel.value ? 'false' : 'true');
+  };
+  sel.addEventListener('change', syncLink); syncLink();
+  document.getElementById('musicfetch').onclick = () => {
+    if (sel.value) { document.getElementById('musicurl').value = sel.value; fetchMusic(sel.value); }
+  };
+}
+document.getElementById('musicclear').onclick = async () => {
+  wasm.cw_tune_clear();
+  try { await clearMusicStore(); } catch (e) {}
+  say('music: removed; the game plays its own again from the next tune');
+  renderMusic();
+};
+
+const cheatPanel = document.getElementById('cheatpanel');
+async function renderCheats() {
+  const status = document.getElementById('cheatstatus');
+  if (!gameId) { status.textContent = 'Play first: the preference file exists once the game has run.'; return; }
+  let rec = null;
+  try { rec = await prefsRecord(); } catch (e) {}
+  if (!rec) { status.textContent = 'No stored preferences yet for this game; play a moment (they are stored within two seconds) and reopen this panel.'; return; }
+  const ui = resourceForkFind(rec.rsrc, 'Pref', 130);
+  if (!ui || ui.length !== 4) { status.textContent = `UI Prefs not found in the stored preferences (${rec.rsrc.length} bytes).`; return; }
+  const bytes = rec.rsrc.subarray(ui.offset, ui.offset + 4);
+  const on = (bytes[3] & 1) !== 0;
+  status.textContent = `UI Prefs ${[...bytes].map(b => b.toString(16).padStart(2, '0')).join(' ')}: cheat bit ${on ? 'SET — type the code with a game open' : 'clear'}.`;
+  document.getElementById('cheatenable').disabled = on;
+}
+document.getElementById('cheatenable').onclick = async () => {
+  const rec = await prefsRecord(); if (!rec) return;
+  const ui = resourceForkFind(rec.rsrc, 'Pref', 130); if (!ui || ui.length !== 4) return;
+  rec.rsrc = rec.rsrc.slice(); rec.rsrc[ui.offset + 3] |= 1; rec.savedAt = Date.now();
+  await putSave(rec);
+  say('cheats: cheat bit set in the stored preferences; reloading so the game reads it at launch');
+  // The running game would write its own copy back over ours within two
+  // seconds, so leave before the next scan.
+  clearInterval(saveTimer);
+  location.reload();
+};
+function optionChar(macKey, ch, shift) {
+  wasm.cw_key_down(0x3A, 0);
+  if (shift) wasm.cw_key_down(0x38, 0);
+  wasm.cw_key_down(macKey, ch); wasm.cw_key_up(macKey, ch);
+  if (shift) wasm.cw_key_up(0x38, 0);
+  wasm.cw_key_up(0x3A, 0);
+}
+function plainChar(macKey, ch) { wasm.cw_key_down(macKey, ch); wasm.cw_key_up(macKey, ch); }
+document.getElementById('cheatcode').onclick = () => {
+  if (!booted) { say('cheats: start the game first'); return; }
+  // © is option-g on a US layout; then g, r, a; then M, because the letters
+  // also arm the game's targeting modes and the last one left is Attack.
+  optionChar(0x05, 0xA9, false);
+  setTimeout(() => plainChar(0x05, 0x67), 120);
+  setTimeout(() => plainChar(0x0F, 0x72), 240);
+  setTimeout(() => plainChar(0x00, 0x61), 360);
+  setTimeout(() => plainChar(0x2E, 0x6D), 600);
+  say('cheats: typed ©gra (and M to clear the armed mode); the message window says whether cheat mode toggled');
+  cheatPanel.hidden = true;
+};
+const CHEAT_KEYS = [
+  ['Jump', 'option-j: asks Level, X, Y in hex, then teleports', 0x26, 0xC6, false],
+  ['Take teleporter', 'option-shift-j: asks a teleporter number, decimal', 0x26, 0xEF, true],
+  ['Create object', 'option-s: asks prop number (hex), Data1 (decimal), Data2 (hex); lands in the inventory', 0x01, 0xA7, false],
+  ['What prop', 'option-p: asks a prop index and prints its record', 0x23, 0xB9, false],
+  ['Position', 'option-shift-/: prints the player\'s x, y', 0x2C, 0xC0, true],
+  ['Clock', 'option-shift-t: prints the time and day', 0x11, 0xFF, true],
+  ['Pass 15 minutes', 'option-t', 0x11, 0xA0, false],
+  ['Darker', '<', 0x2B, 0x3C, true],
+  ['Brighter', '>', 0x2F, 0x3E, true],
+  ['Magic map', 'option-v: the zone around the player, until a click', 0x09, 0xC3, false],
+  ['Walk through walls', 'option-w: toggles', 0x0D, 0xB7, false],
+  ['Everyone hostile', 'option-h: toggles', 0x04, 0xFA, false],
+  ['Night vision', 'option-shift-x: toggles flag 18', 0x07, 0xFE, true],
+  ['Regeneration', 'option-r: toggles flag 12, Omen\'s ring', 0x0F, 0xA8, false],
+  ['Turn-based movement', 'option-space: toggles (works without cheat mode)', 0x31, 0xCA, false],
+  ['Speed limiter', 'option-1: toggles (works without cheat mode)', 0x12, 0xC1, false],
+];
+{
+  const host = document.getElementById('cheatkeys');
+  for (const [name, hint, key, ch, shift] of CHEAT_KEYS) {
+    const b = document.createElement('div'); b.className = 'k'; b.innerHTML = `${name}<small>${hint}</small>`;
+    b.addEventListener('pointerdown', e => { e.preventDefault(); if (!booted) return; optionChar(key, ch, shift); say(`cheats: ${name}`); cheatPanel.hidden = true; });
+    host.appendChild(b);
+  }
+}
+document.getElementById('cheatbtn').onclick = () => { cheatPanel.hidden = !cheatPanel.hidden; if (!cheatPanel.hidden) renderCheats(); };
+document.getElementById('cheatclose').onclick = () => cheatPanel.hidden = true;
+
+// --- the game's menus, drawn by the page
+const menuPanel = document.getElementById('menupanel');
+function renderMenus() {
+  const host = document.getElementById('menus');
+  if (!booted) { host.innerHTML = '<span class="dim">start the game first</span>'; return; }
+  const menus = JSON.parse(dec.decode(new Uint8Array(mem.buffer, wasm.cw_menus(), wasm.cw_menus_len())));
+  host.innerHTML = '';
+  for (const menu of menus.filter(m => m.inBar)) {
+    const box = document.createElement('div'); box.className = 'menu';
+    box.innerHTML = `<h4>${menu.title.replace(/</g, '&lt;') || '(Apple)'}</h4>`;
+    for (const item of menu.items) {
+      if (item.separator) { box.appendChild(document.createElement('hr')); continue; }
+      const b = document.createElement('button');
+      b.innerHTML = `${item.checked ? '&#10003; ' : ''}${item.text.replace(/</g, '&lt;')}${item.key ? `<span class="key">&#8984;${item.key}</span>` : ''}`;
+      b.disabled = !menu.enabled || !item.enabled || item.submenu !== null;
+      b.onclick = () => {
+        const ok = wasm.cw_menu_select(menu.id, item.n);
+        say(`menu: ${menu.title} › ${item.text}: ${ok ? 'chosen' : 'not selectable now'}`);
+        menuPanel.hidden = true;
+      };
+      box.appendChild(b);
+    }
+    host.appendChild(box);
+  }
+}
+document.getElementById('menubtn').onclick = () => { menuPanel.hidden = !menuPanel.hidden; if (!menuPanel.hidden) renderMenus(); };
+document.getElementById('menuclose').onclick = () => menuPanel.hidden = true;
+document.getElementById('logbtn').onclick = () => document.body.classList.toggle('showlog');
+document.getElementById('saves').onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) renderSaves(); };
+document.getElementById('savesclose').onclick = () => panel.hidden = true;
+document.getElementById('showall').onchange = renderSaves;
+document.getElementById('importbtn').onclick = () => document.getElementById('importfile').click();
+document.getElementById('importfile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  try {
+    const mb = fromMacBinary(new Uint8Array(await f.arrayBuffer()));
+    if (!gameId) { say('load the game first, so the character goes into the right folder'); return; }
+    const rec = { path: (booted ? gameFolder() : 'Cythera 1.0.4 ƒ/') + mb.name, type: mb.type, creator: mb.creator, flags: mb.flags, created: mb.created, modified: mb.modified, data: mb.data, rsrc: mb.rsrc, savedAt: Date.now() };
+    await putSave(rec);
+    if (booted) importRecord(rec);
+    say(`imported ${mb.name} (${fourcc(mb.type)}/${fourcc(mb.creator)}, ${mb.data.length}+${mb.rsrc.length} bytes)`);
+    renderSaves();
+  } catch (err) { say('import failed: ' + err.message); }
+});
+// How much of the screen is lit, sampled rather than counted in full so it
+// can be taken on every frame that is drawn. Cythera draws nothing at all
+// while it loads a save, and nothing else it does leaves the screen black.
+let screenLit = 1;
+function present() {
+  const p = wasm.cw_render();
+  const px = new Uint8ClampedArray(mem.buffer, p, W * H * 4);
+  ctx.putImageData(new ImageData(px, W, H), 0, 0);
+  let lit = 0, seen = 0;
+  for (let i = 0; i < W * H; i += 197, seen++) if (px[i * 4] | px[i * 4 + 1] | px[i * 4 + 2]) lit++;
+  screenLit = lit / (seen || 1);
+}
+
+// --- benchmark: headless pacing, comparable with the native --max-instructions figure
+let mode = null;
+document.getElementById('bench').onclick = () => boot().then(() => { mode = 'bench';
+  const target = 85_000_000, chunk = 1_000_000;
+  let done = 0, t0 = performance.now(), lastReport = t0;
+  function step() {
+    if (mode !== 'bench') return;
+    const t = performance.now();
+    while (done < target && performance.now() - t < 40) {
+      done += wasm.cw_run_headless(chunk);
+      if (!wasm.cw_running()) { say('guest halted'); mode = null; break; }
+    }
+    present();
+    const now = performance.now(), secs = (now - t0) / 1000;
+    if (now - lastReport > 1000 || done >= target) {
+      statEl.textContent = `${(done / 1e6).toFixed(0)}M instructions, ${secs.toFixed(1)} s, ${(done / secs / 1e6).toFixed(2)} M/s, tick ${wasm.cw_tick()}`;
+      lastReport = now;
+    }
+    if (done >= target) { say(`benchmark: ${done} instructions in ${secs.toFixed(2)} s = ${(done / secs / 1e6).toFixed(2)} M instructions/s`); mode = null; return; }
+    requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}).catch(e => say('could not start: ' + (e.stack || e)));
+
+// --- play: wall-clock pacing, like the desktop runner
+const VBL_HZ = 60.15, RATE = 22050, MAX_STEPS = 2_000_000;
+// One call into the module runs to completion before the page can look at
+// the clock again, so the slice — not the frame budget — sets the longest
+// the page can be unresponsive. At the ~20 M instructions/s a phone
+// manages, 2M instructions is 100 ms; 150k is under 10 ms. This mattered
+// only once the guest had real work to do in a frame: before the runner
+// stopped idling WaitNextEvent sleeps past ready threads, a paced slice
+// returned almost immediately whatever it was asked for.
+const SLICE = 150_000;
+let audioCtx = null, nextAudioTime = 0, silentMedia = null;
+// The guest's sound is 8-bit at 22,050 Hz, and it used to reach the speaker as
+// one AudioBuffer per animation frame, each declared at the guest's rate and
+// scheduled after the last. That is what made it crackle: splicing
+// AudioBufferSourceNodes end to end puts a full-scale step at every join,
+// sixty a second. Measured in Chrome against a 440 Hz sine, offline, second
+// differences at the joins against the middle of the chunks:
+//
+//   one buffer a frame, as this did          joins 26x the middle, step 0.51
+//   the same, resampled here to the context  joins 26x the middle, step 0.50
+//   the same, every chunk on an exact frame  joins 26x the middle, step 0.50
+//   one worklet node reading a ring          joins  1x the middle, step 0.003
+//   one buffer, one node (the control)       joins  1x the middle, step 0.003
+//
+// So it is the splicing, not the sample rate and not the arithmetic: nothing
+// that schedules a node per frame can be made smooth. The samples themselves
+// were never the problem -- 20 seconds of the theme out of the module hold no
+// clipping and 23 adjacent steps over 16 in 441,600 samples.
+//
+// One node runs for the life of the page instead. The page posts each frame's
+// samples to it and it reads them at the context's rate with the fractional
+// position kept across callbacks, on the audio thread, where the emulator's
+// long main-thread slices cannot starve it. `?audio=legacy` puts the old path
+// back for comparison, and it is also the fallback where AudioWorklet is
+// missing.
+const AUDIO_WORKLET_SOURCE = `
+class GuestAudio extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    this.step = o.processorOptions.rate / sampleRate;
+    this.buf = new Float32Array(o.processorOptions.capacity);
+    this.read = 0; this.written = 0; this.last = 0; this.vel = 0; this.starved = 0; this.n = 0;
+    this.wasDry = false; this.hold = 0; this.holdVel = 0; this.mix = 1;
+    this.port.onmessage = e => {
+      if (e.data === 'reset') { this.read = 0; this.written = 0; this.last = 0; this.vel = 0; this.wasDry = true; return; }
+      const s = e.data, cap = this.buf.length;
+      for (let i = 0; i < s.length; i++) this.buf[(this.written + i) % cap] = s[i];
+      this.written += s.length;
+      // Never write over what has not been read: drop the oldest instead, and
+      // treat the jump that leaves in the stream the way a gap is treated, so
+      // it is cross-faded rather than stepped over. Whether a load fills this
+      // faster than it empties depends on the device: the runner mixes in
+      // proportion to the guest's clock, so a guest running ahead of real
+      // time overflows here and one falling behind runs it dry. Both are
+      // covered, and neither has been measured through an actual load.
+      if (this.written - this.read > cap) { this.read = this.written - cap; this.wasDry = true; }
+    };
+  }
+  process(_, outputs) {
+    const out = outputs[0][0], cap = this.buf.length;
+    for (let i = 0; i < out.length; i++) {
+      if (this.read + 1 >= this.written) {
+        // Nothing left. Carry the wave on at the speed it was going, and take
+        // that speed away over about five samples before letting the level
+        // itself fade: dropping to zero is a click and holding the last value
+        // is a corner, and this is neither. The speed has to go quickly --
+        // a wave carried on in a straight line for long would swing past full
+        // scale -- and the level is clamped in case it tries. The read
+        // position stays where it is, so the stream picks up where it left
+        // off when samples arrive.
+        this.vel *= 0.8;
+        this.last = Math.max(-1, Math.min(1, (this.last + this.vel) * 0.999));
+        // Only count a gap once there has been something to play: this node is
+        // made in the tap that starts the game and runs through the whole boot
+        // with an empty ring, and counting that silence made the figure in the
+        // log unreadable -- 125,378 of them in the first five seconds, nearly
+        // all of them before play began.
+        out[i] = this.last; this.wasDry = true;
+        if (this.written > 0) this.starved++;
+        continue;
+      }
+      const k = Math.floor(this.read), f = this.read - k;
+      const v = this.buf[k % cap] * (1 - f) + this.buf[(k + 1) % cap] * f;
+      // Coming back after a gap, the wave resumes wherever it left off in the
+      // source while the output had faded away, and stepping straight to it
+      // is the click the fade was there to avoid. Cross-fade from where the
+      // fade got to instead, over about four milliseconds.
+      if (this.wasDry) { this.hold = this.last; this.holdVel = this.vel; this.mix = 0; this.wasDry = false; }
+      let outv = v;
+      if (this.mix < 1) {
+        // Cross-fade from what was being heard to what is arriving. The thing
+        // being faded out has to carry on moving the way the wave was moving,
+        // by the same rule the gap itself uses: holding it still is a corner,
+        // and a corner is what is heard. A raised cosine because a straight
+        // ramp starts and stops abruptly, which is two more corners.
+        this.holdVel *= 0.8;
+        this.hold = Math.max(-1, Math.min(1, (this.hold + this.holdVel) * 0.999));
+        this.mix = Math.min(1, this.mix + 0.004);
+        const w = 0.5 - 0.5 * Math.cos(Math.PI * this.mix);
+        outv = this.hold * (1 - w) + v * w;
+      }
+      this.vel = outv - this.last; out[i] = this.last = outv;
+      this.read += this.step;
+    }
+    if ((this.n = (this.n + 1) % 8) === 0) this.port.postMessage({ consumed: this.read, starved: this.starved });
+    return true;
+  }
+}
+registerProcessor('guest-audio', GuestAudio);
+`;
+// How much sound is kept ahead of the speaker. The frame loop asks the guest
+// for whatever brings the ring back up to this, so the audio device's clock
+// sets the pace rather than the wall clock, which is what the game's own
+// sound channels expect.
+const AUDIO_TARGET = Math.round(RATE * 0.18), AUDIO_CAPACITY = Math.round(RATE * 0.5);
+let audioNode = null, audioMode = 'pending', audioQueued = 0, audioConsumed = 0, audioStarved = 0;
+let audioConsumedAt = 0, audioStarvedSeen = 0;
+// How much sound the ring still holds. The worklet says where it has read to
+// every eight callbacks, and that message waits behind whatever the main
+// thread is doing -- which, in the middle of the emulator, is tens of
+// milliseconds. Taking the message at face value made the ring look fuller
+// than it was exactly when the page was busiest, so the frame loop asked for
+// less sound exactly when it should have asked for more. The last position is
+// carried forward at the rate the node reads instead, which needs no message
+// to be on time. While the ring is empty the node reads nothing, so this
+// over-counts what has gone, which errs towards making more sound.
+function ringAhead() {
+  if (!audioNode) return 0;
+  const since = Math.max(0, audioCtx.currentTime - audioConsumedAt);
+  return audioQueued - (audioConsumed + since * RATE);
+}
+// A quarter second of 8 kHz silence. iOS routes a page that uses only Web
+// Audio through an audio session the Ring/Silent switch mutes, and nothing
+// in the Web Audio API can change that -- which is how this page could push
+// 666,792 non-silent samples into a running context and be inaudible. A
+// playing HTMLMediaElement moves the page to a playback session that
+// ignores the switch, so this clip is started in the same user gesture and
+// left looping for as long as the game runs.
+const SILENT_WAV = 'data:audio/wav;base64,UklGRvQHAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YdAHAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
+// iOS starts audio only inside the user's tap, so the context is made and
+// unlocked synchronously in the click handler, before anything is awaited,
+// and resumed again on every touch of the canvas in case it was suspended.
+function unlockAudio() {
+  if (!silentMedia) {
+    silentMedia = new Audio(SILENT_WAV);
+    silentMedia.loop = true;
+    silentMedia.setAttribute('playsinline', '');
+    silentMedia.style.display = 'none';
+    document.body.appendChild(silentMedia);
+    silentMedia.play()
+      .then(() => say('audio: media session held open'))
+      .catch(e => say('audio: media session refused (' + e.name + '), the Ring/Silent switch will mute the game'));
+  }
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { say('no audio: ' + e.message); return; }
+    const silent = audioCtx.createBuffer(1, 1, RATE), src = audioCtx.createBufferSource();
+    src.buffer = silent; src.connect(audioCtx.destination); src.start();
+    startWorklet();
+  }
+  if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+}
+// The log is the only way anything about a run on a phone gets back here, so
+// it has to be possible to take it away. The clipboard needs a gesture, which
+// a press is; where it is refused the text is selected instead, which leaves
+// the phone's own Copy one tap away.
+{
+  const btn = document.getElementById('logcopy');
+  btn.addEventListener('click', async () => {
+    const text = logEl.textContent;
+    const done = () => { const was = btn.textContent; btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = was; }, 1500); };
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); done(); return; }
+    } catch (e) {}
+    try {
+      const r = document.createRange(); r.selectNodeContents(logEl);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      btn.textContent = 'select and copy';
+      setTimeout(() => { btn.textContent = 'Copy log'; }, 3000);
+    } catch (e) { say('could not copy the log: ' + (e.message || e)); }
+  });
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && audioCtx) audioCtx.resume().catch(() => {}); });
+// Made in the tap with the context, because a page that waits until the first
+// frame to ask for a worklet has left the gesture iOS grants audio in.
+function startWorklet() {
+  if (new URLSearchParams(location.search).get('audio') === 'legacy') {
+    audioMode = 'legacy'; say('audio: the old buffer-a-frame path, by ?audio=legacy'); return;
+  }
+  if (!audioCtx.audioWorklet) { audioMode = 'legacy'; say('audio: no AudioWorklet here; the old buffer-a-frame path'); return; }
+  let url;
+  try { url = URL.createObjectURL(new Blob([AUDIO_WORKLET_SOURCE], { type: 'text/javascript' })); }
+  catch (e) { audioMode = 'legacy'; say('audio: ' + e.message + '; the old buffer-a-frame path'); return; }
+  audioCtx.audioWorklet.addModule(url).then(() => {
+    const node = new AudioWorkletNode(audioCtx, 'guest-audio', {
+      numberOfInputs: 0, outputChannelCount: [1],
+      processorOptions: { rate: RATE, capacity: AUDIO_CAPACITY },
+    });
+    node.port.onmessage = e => {
+      audioConsumed = e.data.consumed; audioConsumedAt = audioCtx.currentTime; audioStarved = e.data.starved;
+    };
+    node.connect(audioCtx.destination);
+    audioNode = node; audioMode = 'worklet';
+    say(`audio: one node at ${audioCtx.sampleRate} Hz, ${(AUDIO_TARGET / RATE * 1000).toFixed(0)} ms kept ahead`);
+  }).catch(e => {
+    audioMode = 'legacy'; say('audio: the worklet would not load (' + (e.message || e) + '); the old buffer-a-frame path');
+  }).finally(() => URL.revokeObjectURL(url));
+}
+// Everything the ring holds is dropped: the guest is about to jump forward and
+// what is queued belongs to a moment that will not be played.
+function resetAudio() {
+  wasm.cw_audio_drain(); nextAudioTime = 0;
+  if (audioNode) { audioNode.port.postMessage('reset'); audioQueued = 0; audioConsumed = 0; audioConsumedAt = audioCtx.currentTime; }
+}
+// The frames the page spends off the wall clock -- a black screen while a room
+// or a save loads, and the catch-up that follows -- used to throw their sound
+// away, which is why the music stopped between screens. The guest mixes in
+// proportion to its own clock, about 8,800 samples for every 24 ticks it
+// advances, so those frames have real music in them; it is only that there
+// be more or less of it than the time it took to make, depending on the
+// device. So it is carried instead, newest ring-full first: a guest ahead of
+// real time overflows the ring, which cross-fades where it drops the oldest,
+// and a guest behind it runs the ring down, which the worklet's own fade
+// covers. The old path cannot hold a backlog, so it still drops.
+function carryAudio() {
+  if (audioNode) pushAudio(); else resetAudio();
+}
+function audioReport() {
+  if (!audioCtx) return;
+  const media = silentMedia ? (silentMedia.paused ? 'paused' : 'playing') : 'none';
+  const since = audioStarved - audioStarvedSeen; audioStarvedSeen = audioStarved;
+  const path = audioNode
+    ? `one node, ${Math.round(ringAhead())} samples ahead, ran dry ${since} times since the last of these (${audioStarved} in all)`
+    : `buffer a frame (${audioMode})`;
+  say(`audio: context ${audioCtx.state} at ${audioCtx.sampleRate} Hz, ${audioPushed} samples pushed, ${audioLoud} loud checks, media session ${media}, ${path}`);
+  if (booted) say('sound path: ' + dec.decode(new Uint8Array(mem.buffer, wasm.cw_audio_debug(), wasm.cw_audio_debug_len())));
+  // The runner hands the page samples only while a sound channel is open;
+  // silence between sounds is not mixed. Zero pushed after seconds of play
+  // means the game itself is playing nothing.
+  if (audioPushed === 0) say('audio: the game has produced no sound yet — if this persists, open Menu › File › Preferences and check the Music slider and its Mute box');
+}
+canvas.addEventListener('pointerdown', unlockAudio);
+let audioPushed = 0, audioLoud = 0;
+function pushAudio() {
+  // Drain first: cw_audio_len is the length of what the last drain took, so
+  // asking it before draining reads the previous frame's count — and on the
+  // first frame that is zero, which made this return before ever draining.
+  // The runner's buffer then only grew, and the page pushed nothing, ever.
+  const ptr = wasm.cw_audio_drain(), n = wasm.cw_audio_len(); if (!n || !audioCtx) return;
+  const src = new Uint8Array(mem.buffer, ptr, n);
+  audioPushed += n; for (let i = 0; i < n; i += 64) if (Math.abs(src[i] - 128) > 4) audioLoud++;
+  // Still waiting for the worklet: drop these rather than start the old path
+  // for a frame or two and hand the speaker two streams at once.
+  if (audioMode === 'pending') return;
+  if (audioNode) {
+    // A frame off the wall clock can leave seconds of sound behind it. Only
+    // the newest ring-full is worth posting: the rest would be dropped at the
+    // far end anyway, and it is the music the game is playing now.
+    const keep = Math.min(n, AUDIO_CAPACITY), from = n - keep;
+    const f = new Float32Array(keep);
+    for (let i = 0; i < keep; i++) f[i] = (src[from + i] - 128) / 128;
+    audioNode.port.postMessage(f, [f.buffer]);
+    audioQueued += keep;
+    return;
+  }
+  const buf = audioCtx.createBuffer(1, n, RATE), ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) ch[i] = (src[i] - 128) / 128;
+  const node = audioCtx.createBufferSource(); node.buffer = buf; node.connect(audioCtx.destination);
+  const t = Math.max(audioCtx.currentTime + 0.02, nextAudioTime);
+  node.start(t); nextAudioTime = t + n / RATE;
+}
+const isTouch = matchMedia('(pointer: coarse)').matches;
+if (isTouch) document.body.classList.add('touch');
+// The game's own start-up is ~85M instructions, sixteen seconds of Mac time
+// that nothing waits on the player for. Run that stretch unpaced and start
+// the clock just before the start screen fades in and its music queues.
+const FAST_FORWARD = Number(new URLSearchParams(location.search).get('ff') ?? 80_000_000);
+function fastForward() {
+  return new Promise(resolve => {
+    let done = 0;
+    function step() {
+      const t = performance.now();
+      while (done < FAST_FORWARD && performance.now() - t < 40) { done += wasm.cw_run_headless(Math.min(2_000_000, FAST_FORWARD - done)); if (!wasm.cw_running()) break; }
+      present(); statEl.textContent = `starting the game… ${(done / 1e6).toFixed(0)}M`;
+      if (done < FAST_FORWARD && wasm.cw_running()) requestAnimationFrame(step); else resolve();
+    }
+    step();
+  });
+}
+// Once the game is running the Play button has nothing left to start, so it
+// becomes Restart. Restarting is a reload: the saves live in IndexedDB and are
+// restored on boot, so a restart costs nothing that was written to a character.
+// It takes two presses, and disarms itself after four seconds, because the bar
+// sits directly above the canvas and a stray thumb should not be able to throw
+// a session away. Play is not merely decoration before that point -- it makes
+// the AudioContext inside the tap, which is the only moment iOS allows one.
+function becomeRestart() {
+  const b = document.getElementById('play');
+  let armed = 0;
+  b.classList.add('restart');
+  b.textContent = 'Restart';
+  b.onclick = () => {
+    if (armed) {
+      clearTimeout(armed); armed = 0;
+      b.disabled = true; b.textContent = 'restarting…';
+      location.reload();
+      return;
+    }
+    b.classList.add('confirm');
+    b.textContent = 'Restart? tap again';
+    armed = setTimeout(() => {
+      armed = 0; b.classList.remove('confirm'); b.textContent = 'Restart';
+    }, 4000);
+  };
+}
+document.getElementById('play').onclick = () => { unlockAudio(); return boot().then(fastForward).then(() => {
+  mode = 'play'; document.body.classList.add('playing');
+  becomeRestart();
+  // The boot ran headless; drop the audio it synthesised for those ticks.
+  wasm.cw_audio_drain();
+  let startTick = wasm.cw_tick(), t0 = performance.now();
+  let audioRemainder = 0, lastT = t0, insWindow = 0, winT = t0, reports = 0, catchingUp = 0;
+  let blackSince = 0, blackAt = 0;
+  // The maintainer's long freeze on opening a file did not show up in either
+  // of the two branches that log -- his log has one 0.7 s black screen at boot
+  // and one catch-up of a single frame, and nothing else -- so the page has to
+  // say when a frame itself took far longer than a frame. The parts are
+  // separated because they fail differently: a slice of the guest that will
+  // not be interrupted, and drawing.
+  function noteSlowFrame(now, where, guestMs, drawMs, steps) {
+    const total = performance.now() - now;
+    if (total < 250) return;
+    // 1,050,000 instructions in 37,957 ms on the phone is about 28 a
+    // millisecond, where the same call on a desktop manages 54,000. That is
+    // not a difference in processor speed, so the three things that could
+    // make one call take thousands of times longer are reported with it: how
+    // much guest clock it covered, whether the module's heap moved, and
+    // whether the guest was writing to the log through the page.
+    const ticks = wasm.cw_tick() - frameTick0, heap = mem.buffer.byteLength >> 20;
+    say(`play: a ${total.toFixed(0)} ms frame in ${where} at tick ${wasm.cw_tick()} — ` +
+        `${guestMs.toFixed(0)} ms guest (${steps} instructions over ${ticks} ticks), ` +
+        `${drawMs.toFixed(0)} ms drawing, heap ${heap} MB${heap !== frameHeap0 ? ` (was ${frameHeap0} at the start of it)` : ''}, ` +
+        `${logCalls - frameLogs0} lines logged by the module`);
+  }
+  let frameTick0 = 0, frameHeap0 = 0, frameLogs0 = 0;
+  // How many instructions to hand the guest in one uninterruptible go while
+  // the page is off the wall clock. The loop that calls it checks the clock
+  // between calls, which bounds nothing if a single call takes seconds: the
+  // maintainer's phone spent 37,957 ms on seven of them. So a call that runs
+  // long shrinks the next one, and quick calls let it grow back. If the cost
+  // turns out to be proportional to the instructions, this alone keeps the
+  // page answering; if one operation inside the slice is what costs, the
+  // shrinking will stop helping and say so by not helping.
+  // The freeze is one call. Of the sixteen the frame made, fifteen took 37 ms
+  // between them and one took 34,503 -- for the same 150,000 instructions. So
+  // shrinking after the fact is no use: the first call is the whole thing.
+  //
+  // This starts small instead and grows while calls are quick, so the
+  // expensive region is met in a small slice and the log says how the cost is
+  // spread. If one small slice still takes tens of seconds, a single
+  // instruction or the trap under it is responsible and the tick names where.
+  // If thirty small slices each take a second, it is spread over the region
+  // and a different thing to chase. Either way the page stops being held for
+  // half a minute by a slice it chose to make big.
+  const SLICE_MIN = 5_000, SLICE_START = 20_000;
+  let catchSlice = SLICE_START, slowSaid = 0;
+  function resetCatchSlice() { catchSlice = SLICE_START; slowSaid = 0; }
+  function runCatchup(now, budgetMs) {
+    let s = 0;
+    while (performance.now() - now < budgetMs) {
+      const at = wasm.cw_tick(), c0 = performance.now();
+      const r = wasm.cw_run_catchup(catchSlice, wasm.cw_tick() + 120);
+      const took = performance.now() - c0;
+      if (took > 300) {
+        if (slowSaid < 8) { say(`play: ${(r || catchSlice).toLocaleString()} instructions took ${took.toFixed(0)} ms at tick ${at}`); slowSaid++; }
+        catchSlice = SLICE_MIN;
+      } else if (took < 8 && catchSlice < SLICE) {
+        catchSlice = Math.min(SLICE, Math.round(catchSlice * 1.5));
+      }
+      if (!r || !wasm.cw_running()) break;
+      s += r;
+    }
+    return s;
+  }
+  // Cycles per tick follow what this device delivers: the runner's default
+  // is the 25 MHz profile, and a phone that manages 21 M instructions a
+  // second would otherwise fall further behind the clock every second.
+  // Measured over a second, applied at 90%, never above the profile.
+  const IPT_DEFAULT = wasm.cw_instructions_per_tick();
+  let ipt = IPT_DEFAULT;
+  say(`play: ${IPT_DEFAULT} instructions/tick`);
+  function frame() {
+    if (mode !== 'play') return;
+    const now = performance.now();
+    frameTick0 = wasm.cw_tick(); frameHeap0 = mem.buffer.byteLength >> 20; frameLogs0 = logCalls;
+    const deadline = startTick + Math.floor((now - t0) / 1000 * VBL_HZ);
+    // A guest that has run ahead of the wall clock is left alone until the
+    // clock catches up: that is what pacing is. Re-basing the clock on it
+    // instead -- which this did briefly -- lets the guest's own idle
+    // fast-forwards carry the deadline along with them, and the game then
+    // keeps time sixteen times too fast, which is a day of hunger every
+    // hour and a half.
+    // Loading a save is about 60M instructions during which the game draws
+    // nothing at all, and pacing the guest to the wall clock through that is
+    // pure waiting: there is no frame to be in time for and no sound to be
+    // in step with. So while the screen is black the page stops pacing and
+    // runs the guest flat out. A drawn screen is the signal to stop, which
+    // is why this waits on the picture rather than on the picture holding
+    // still -- a still picture is also what an idle game has, and pacing an
+    // idle game is the whole point.
+    //
+    // Bounded all the same, because running unpaced advances the guest clock
+    // as fast as the device manages and the game keeps time by it: hunger,
+    // healing and spell durations all run off the same clock.
+    if (screenLit > 0.02) { blackSince = 0; }
+    else if (!blackSince) { blackSince = now; resetCatchSlice(); }
+    if (blackSince && now - blackSince < 8000) {
+      if (!blackAt) blackAt = now;
+      const g0 = performance.now();
+      const s = runCatchup(now, 42);
+      const gMs = performance.now() - g0;
+      insWindow += s;
+      startTick = wasm.cw_tick(); t0 = performance.now(); lastT = t0;
+      const d0 = performance.now(); present(); const dMs = performance.now() - d0;
+      noteSlowFrame(now, 'a black screen', gMs, dMs, s);
+      if (screenLit > 0.02) {
+        say(`play: the screen was black for ${((performance.now() - blackAt) / 1000).toFixed(1)} s; ran unpaced until the game drew again`);
+        blackSince = 0; blackAt = 0;
+      }
+      if (now - winT > 1000) { statEl.textContent = `${W}x${H}, ${(insWindow / ((now - winT) / 1000) / 1e6).toFixed(1)} M/s, drawing nothing`; insWindow = 0; winT = now; }
+      carryAudio();
+      requestAnimationFrame(frame);
+      return;
+    }
+    // Catch-up. Loading a save is ~110M instructions with nothing on screen;
+    // paced by the clock at 26 ms a frame the phone gave it 60% of itself
+    // and the black screen lasted 15-20 s. A third of a second behind, the
+    // guest runs on the headless path for most of the frame, the frame is
+    // presented every third time, and the clock is re-based on the guest's
+    // tick. The headless path skips the guest's WaitNextEvent sleeps and
+    // TickCount spins, and runs the interrupt tasks for every tick skipped,
+    // so one uncapped 2M-instruction call in a load skipped minutes of
+    // guest clock and blocked the page for ten seconds. Each call is now
+    // capped at 120 ticks of guest clock, two seconds, which keeps it to a
+    // few tens of milliseconds whatever the guest is doing.
+    if (wasm.cw_tick() < deadline - 20) {
+      const g0 = performance.now();
+      const s = runCatchup(now, 42);
+      const gMs = performance.now() - g0;
+      insWindow += s; catchingUp++;
+      startTick = wasm.cw_tick(); t0 = performance.now(); lastT = t0;
+      const d0 = performance.now(); if (catchingUp % 3 === 1) present(); const dMs = performance.now() - d0;
+      noteSlowFrame(now, 'catching up', gMs, dMs, s);
+      if (now - winT > 1000) { statEl.textContent = `${W}x${H}, ${(insWindow / ((now - winT) / 1000) / 1e6).toFixed(1)} M/s, catching up`; insWindow = 0; winT = now; }
+      // The sound made while behind is the music the game is playing; carry it.
+      carryAudio();
+      requestAnimationFrame(frame);
+      return;
+    }
+    if (catchingUp) { say(`play: caught up after ${catchingUp} frames`); catchingUp = 0; }
+    const dt = Math.min(now - lastT, 100); lastT = now;
+    // On the worklet path the speaker sets the pace: ask for whatever brings
+    // the ring back to AUDIO_TARGET, capped at a tenth of a second so one
+    // long frame cannot make the guest synthesise a second of music at once.
+    // The old path has no ring, so it still goes by the wall clock.
+    let samples;
+    if (audioNode) {
+      samples = Math.max(0, Math.min(Math.round(RATE * 0.1), Math.round(AUDIO_TARGET - ringAhead())));
+    } else {
+      const want = Math.max(0, dt / 1000 * RATE + audioRemainder); samples = Math.floor(want); audioRemainder = want - samples;
+    }
+    let steps = 0;
+    // Spend most of the frame on the guest when it is behind; rendering at
+    // 30 fps beats a guest at 70% duty.
+    const budget = wasm.cw_tick() < deadline - 2 ? 26 : 13;
+    const guestFrom = performance.now();
+    while (wasm.cw_tick() < deadline && steps < MAX_STEPS && performance.now() - now < budget) {
+      steps += wasm.cw_run(Math.min(SLICE, MAX_STEPS - steps), deadline, 0);
+      if (!wasm.cw_running()) { say('guest halted'); mode = null; break; }
+    }
+    const guestMs = performance.now() - guestFrom;
+    // Mix this frame's audio whether or not the CPU ran: a guest already at
+    // the deadline returns before mixing, which on a phone that keeps up
+    // with the clock was every frame, and the page heard nothing.
+    wasm.cw_mix_audio(samples);
+    insWindow += steps;
+    if (now - winT > 1000) {
+      const rate = insWindow / ((now - winT) / 1000);
+      if (wasm.cw_tick() < deadline - 2) {
+        ipt = Math.max(100_000, Math.min(IPT_DEFAULT, Math.round(rate * 0.9 / VBL_HZ)));
+        wasm.cw_set_instructions_per_tick(ipt);
+      } else if (ipt < IPT_DEFAULT) {
+        ipt = Math.min(IPT_DEFAULT, Math.round(ipt * 1.05)); wasm.cw_set_instructions_per_tick(ipt);
+      }
+      statEl.textContent = `${W}x${H}, ${(rate / 1e6).toFixed(1)} M/s, ${wasm.cw_tick() - deadline} ticks, ${(ipt / 1000).toFixed(0)}k/tick`;
+      insWindow = 0; winT = now;
+      noteHeap();
+      if (++reports === 5 || reports === 30) audioReport();
+    }
+    pushAudio();
+    const drawFrom = performance.now(); present(); const drawMs = performance.now() - drawFrom;
+    noteSlowFrame(now, 'play', guestMs, drawMs, steps);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}).catch(e => say('could not start: ' + (e.stack || e))); };
+
+// --- input: the pointer
+function guestPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  // object-fit: contain letterboxes the canvas inside its box; map through
+  // the drawn rectangle, not the element.
+  const scale = Math.min(r.width / W, r.height / H);
+  const left = r.left + (r.width - W * scale) / 2, top = r.top + (r.height - H * scale) / 2;
+  const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+  return [clamp(Math.round((e.clientY - top) / scale), 0, H - 1), clamp(Math.round((e.clientX - left) / scale), 0, W - 1)];
+}
+// Cythera tests StillDown, and a finger's tap can be shorter than the guest's
+// first poll after the mouse-down. The release waits until the button has
+// been down for MIN_HOLD_MS, so a tap is a click and a hold is a hold; a drag
+// is unaffected because its release comes later anyway.
+const MIN_HOLD_MS = 160;
+let downAt = 0, pendingUp = null;
+function mouseUpAt(v, h) {
+  const wait = downAt + MIN_HOLD_MS - performance.now();
+  if (pendingUp) clearTimeout(pendingUp);
+  if (wait > 0) pendingUp = setTimeout(() => { pendingUp = null; wasm.cw_mouse_up(v, h); }, wait);
+  else wasm.cw_mouse_up(v, h);
+}
+canvas.addEventListener('pointermove', e => { if (!booted) return; const [v, h] = guestPoint(e); wasm.cw_mouse_move(v, h); });
+canvas.addEventListener('pointerdown', e => {
+  if (!booted) return;
+  e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+  if (pendingUp) { clearTimeout(pendingUp); pendingUp = null; const [pv, ph] = guestPoint(e); wasm.cw_mouse_up(pv, ph); }
+  const [v, h] = guestPoint(e); wasm.cw_mouse_move(v, h); wasm.cw_mouse_down(v, h); downAt = performance.now();
+});
+canvas.addEventListener('pointerup', e => { if (!booted) return; const [v, h] = guestPoint(e); mouseUpAt(v, h); });
+canvas.addEventListener('pointercancel', e => { if (!booted) return; const [v, h] = guestPoint(e); mouseUpAt(v, h); });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// --- input: the touch shell. Every key it presses goes through heldKeys so
+// that nothing can stay down when a finger leaves, the page hides or the
+// game is paused; a stuck movement key is a character who walks off alone.
+const heldKeys = new Map();
+function keyOf(code) { return MAC_KEY[code]; }
+function charOf(code) {
+  if (MAC_CHAR[code] !== undefined) return MAC_CHAR[code];
+  if (/^Key[A-Z]$/.test(code)) return code.charCodeAt(3) + 32;
+  if (/^Numpad[0-9]$/.test(code)) return code.charCodeAt(6);
+  return 0;
+}
+function pressCode(code) {
+  const k = keyOf(code); if (k === undefined || !booted || heldKeys.has(code)) return;
+  heldKeys.set(code, true); wasm.cw_key_down(k, charOf(code));
+}
+function releaseCode(code) {
+  const k = keyOf(code); if (k === undefined || !booted || !heldKeys.delete(code)) return;
+  wasm.cw_key_up(k, charOf(code));
+}
+function releaseAll() { for (const code of Array.from(heldKeys.keys())) releaseCode(code); }
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+window.addEventListener('blur', releaseAll);
+
+// The command letters arm a mode the next direction directs (the manual,
+// p.6: G+arrow gets, L+arrow looks, A attacks, T talks, U uses; M cancels).
+// The mode clears itself after the command runs, so this only echoes what
+// was pressed; the game's own MOVE/TAKE/... tab is the readout.
+const ARMS = { KeyG: 'Get: choose a direction', KeyT: 'Talk: choose a direction', KeyL: 'Look: choose a direction', KeyU: 'Use: choose a direction', KeyA: 'Attack: choose a direction', KeyM: 'Move' };
+const armedEl = document.getElementById('armed');
+let armedTimer = null;
+function showArmed(text) {
+  armedEl.textContent = text; armedEl.style.display = 'block';
+  clearTimeout(armedTimer); armedTimer = setTimeout(() => armedEl.style.display = 'none', 2500);
+}
+for (const el of document.querySelectorAll('#hud .k[data-key]')) {
+  const code = el.dataset.key;
+  el.addEventListener('pointerdown', e => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId);
+    pressCode(code); el.classList.add('held');
+    if (ARMS[code]) showArmed(ARMS[code]);
+  });
+  const up = e => { releaseCode(code); el.classList.remove('held'); };
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+  el.addEventListener('lostpointercapture', up);
+}
+// Pads move by their title, and remember where they were put.
+for (const pad of document.querySelectorAll('.pad')) {
+  const title = pad.querySelector('.title'); let drag = null;
+  try { const saved = JSON.parse(localStorage.getItem('pad:' + pad.id) || 'null'); if (saved) { pad.style.left = saved.left; pad.style.top = saved.top; pad.style.right = 'auto'; pad.style.bottom = 'auto'; } } catch (e) {}
+  title.addEventListener('pointerdown', e => { e.preventDefault(); title.setPointerCapture(e.pointerId); const r = pad.getBoundingClientRect(); drag = { dx: e.clientX - r.left, dy: e.clientY - r.top }; });
+  title.addEventListener('pointermove', e => { if (!drag) return; pad.style.left = (e.clientX - drag.dx) + 'px'; pad.style.top = (e.clientY - drag.dy) + 'px'; pad.style.right = 'auto'; pad.style.bottom = 'auto'; });
+  const end = () => { if (!drag) return; drag = null; try { localStorage.setItem('pad:' + pad.id, JSON.stringify({ left: pad.style.left, top: pad.style.top })); } catch (e) {} };
+  title.addEventListener('pointerup', end); title.addEventListener('pointercancel', end);
+}
+
+// Typing: a hidden input raises the phone's keyboard; each character it
+// receives goes to the game as a key down and up, Backspace and Return by
+// their own keys. Cythera needs text for a character's name and for what is
+// said in conversation, so this is not optional.
+const kb = document.getElementById('kb');
+const CHAR_KEY = {};
+for (const [code, k] of Object.entries(MAC_KEY)) {
+  if (/^Key[A-Z]$/.test(code)) CHAR_KEY[code[3].toLowerCase()] = k;
+  if (/^Digit[0-9]$/.test(code)) CHAR_KEY[code[5]] = k;
+}
+Object.assign(CHAR_KEY, { ' ': 0x31, '-': 0x1B, '=': 0x18, '[': 0x21, ']': 0x1E, '\\': 0x2A, ';': 0x29, "'": 0x27, ',': 0x2B, '.': 0x2F, '/': 0x2C, '`': 0x32 });
+function typeChar(ch) {
+  if (!booted) return;
+  const c = ch.charCodeAt(0); if (c > 126) return;
+  const k = CHAR_KEY[ch.toLowerCase()] ?? 0x00;
+  const shift = ch !== ch.toLowerCase() || '~!@#$%^&*()_+{}|:"<>?'.includes(ch);
+  if (shift) wasm.cw_key_down(0x38, 0);
+  wasm.cw_key_down(k, c); wasm.cw_key_up(k, c);
+  if (shift) wasm.cw_key_up(0x38, 0);
+}
+kb.addEventListener('input', () => { for (const ch of kb.value) typeChar(ch); kb.value = ''; });
+kb.addEventListener('keydown', e => {
+  if (e.key === 'Backspace') { e.preventDefault(); wasm.cw_key_down(0x33, 8); wasm.cw_key_up(0x33, 8); }
+  else if (e.key === 'Enter') { e.preventDefault(); wasm.cw_key_down(0x24, 13); wasm.cw_key_up(0x24, 13); }
+  else if (e.key === 'Escape') { e.preventDefault(); wasm.cw_key_down(0x35, 27); wasm.cw_key_up(0x35, 27); kb.blur(); }
+});
+document.getElementById('kbtoggle').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  if (document.activeElement === kb) kb.blur(); else kb.focus();
+});
+
+function macChar(e) {
+  if (e.key.length === 1 && e.key.charCodeAt(0) < 128) return e.key.charCodeAt(0);
+  return MAC_CHAR[e.code] || 0;
+}
+window.addEventListener('keydown', e => { if (!booted || e.target.tagName === 'INPUT') return; const k = MAC_KEY[e.code]; if (k === undefined) return; e.preventDefault(); if (!e.repeat) wasm.cw_key_down(k, macChar(e)); });
+window.addEventListener('keyup', e => { if (!booted) return; const k = MAC_KEY[e.code]; if (k === undefined) return; e.preventDefault(); wasm.cw_key_up(k, macChar(e)); });
+
+</script>
