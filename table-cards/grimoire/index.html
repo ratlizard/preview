@@ -1,0 +1,2473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Grimoire: A Cythera Experiment</title>
+<link rel="icon" id="favicon" href="data:,">
+<style>
+/* ---- One knob for every size of type ------------------------------------
+   Every font-size in this sheet is in rem, so the two rules below are the
+   only places a text size is decided. Raising the root raises the whole
+   page at once -- captions, chips, tab labels, table cells, the hover cards
+   -- in the proportions the sheet already had.
+
+   It used to be px, and the cost of that was visible on a desktop screen:
+   the @media (min-width:900px) block at the foot of this sheet had to name
+   a selector for every size it wanted bigger, it named about forty of them,
+   and the other two hundred stayed at the size they were drawn for a phone
+   held close. Adding a rule and forgetting its desktop counterpart was the
+   ordinary case rather than the mistake.
+
+   A percentage rather than a px, so a reader who has set a larger default
+   in their browser keeps it: 109% is 17.5px against the usual 16, and the
+   desktop rule at the foot is 125%, 20px. Those two numbers are the whole
+   of the scale; change them rather than the individual rules. */
+  html { font-size:109%; }
+  body { background:#1a1a1a; color:#eee; font-family: system-ui, sans-serif; padding:16px; font-size:1rem; line-height:1.5; }
+  input[type=file] { margin-bottom:12px; }
+  button { background:#2E8B57; color:#fff; border:none; padding:14px; font-size:1.1rem; border-radius:6px; width:100%; margin-bottom:12px; cursor:pointer; }
+  button.secondary { background:#3a5a7a; }
+  select { width:100%; padding:10px; font-size:1rem; margin-bottom:12px; background:#222; color:#eee; border-radius:6px; }
+  pre { background:#0d0d0d; color:#fff; padding:12px; white-space:pre-wrap; font-size:0.875rem; line-height:1.55; border-radius:6px; max-height:200px; overflow:auto; }
+  h2 { font-size:1rem; color:#fff; }
+  #singlePreview { margin-top:12px; padding:10px; background:#111; border:2px solid #C4A464; border-radius:8px; text-align:center; }
+  #canvas { image-rendering: pixelated; background:#333; display:block; margin:0 auto; }
+  .zoomrow { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .zoomrow input[type=range] { flex:1; }
+  #sheetGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:10px; margin-top:12px; }
+  .cell { background:#111; border:1px solid #444; border-radius:6px; padding:6px; text-align:center; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:162px; }
+  .cell:hover { border-color:#C4A464; }
+  .cell canvas { image-rendering:pixelated; background:#333; max-width:100%; }
+  .cellimgwrap { flex:1; display:flex; align-items:center; justify-content:center; width:100%; overflow:hidden; }
+  /* Character cells: the image area was flex:1 inside a fixed 150px cell, so
+     a two- or three-line caption ("Lv 4 · North Shore Vineyard") squeezed it
+     and overflow:hidden sliced the top off the portrait. The art now gets a
+     fixed 88px band and the caption is clamped instead. */
+  .cell.charCell { height:202px; justify-content:flex-start; overflow:visible; }
+  .cell.charCell .cellimgwrap { flex:0 0 104px; height:104px; overflow:visible; }
+  .cell.charCell .portraitBox { position:relative; width:76px; height:76px; margin:14px auto; }
+  /* Scoped to the portrait itself. This rule used to match ANY canvas inside
+     the box, which included the walker -- so the sprite was being blown up to
+     76px and pinned over the portrait instead of walking round it. */
+  .cell.charCell .portraitBox > canvas.portrait { width:76px !important; height:76px !important; display:block; }
+  .cell.charCell .portraitBox > canvas.walker { width:26px !important; height:26px !important; }
+  .cell.charCell .lbl { margin-top:6px; display:-webkit-box; -webkit-line-clamp:2;
+    -webkit-box-orient:vertical; overflow:hidden; }
+  /* Two lines rather than an ellipsis: "Lv 8 · Land King Hall" was cut to
+     "Land K…" in a cell with a line to spare. */
+  .cell.charCell .resid { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden; max-width:100%; line-height:1.25; }
+  .cell .lbl { font-size:0.875rem; color:#fff; font-weight:600; margin-top:4px; word-break:break-word; line-height:1.3; }
+  .cell .lbl.nolabel { font-size:0.75rem; color:#c9c9c9; font-weight:400; }
+  .cell .resid { font-size:0.6875rem; color:#d8c98a; opacity:0.85; margin-top:2px; }
+  .modebtns { display:flex; gap:8px; margin-bottom:12px; }
+  .modebtns button { flex:1; margin-bottom:0; }
+  .modebtns button.inactive { background:#333; }
+
+/* Pan affordances, not controls: they hint that more map exists in that
+   direction and fade out entirely once you reach that edge. */
+.mapArrowBtn { width:22px !important; height:22px !important; min-height:0 !important;
+  padding:0 !important; margin:0; font-size:0.8125rem; z-index:5; line-height:1;
+  background:none !important; background-image:none !important; border:0 !important;
+  box-shadow:none !important; clip-path:none !important; color:#d9cfa8 !important;
+  opacity:.34; text-shadow:0 1px 2px #000 !important; transition:opacity .18s ease; }
+.mapArrowBtn::after, .mapArrowBtn::before { display:none !important; }
+.mapArrowBtn:hover { opacity:.7; }
+.mapArrowBtn.atEdge { opacity:0; pointer-events:none; }
+/* The chevrons are two borders of a small square turned to point, because
+   none of the page's three faces carries an arrow or a triangle: the entities
+   these replaced fell through to the device's own symbol font, which on a
+   phone can draw one as an emoji. */
+.mapArrowBtn .chev { display:inline-block; width:7px; height:7px; box-sizing:border-box;
+  border:solid currentColor; border-width:2px 0 0 2px; filter:drop-shadow(0 1px 1px #000); }
+.mapArrowBtn .chev.up { transform:translateY(2px) rotate(45deg); }
+.mapArrowBtn .chev.down { transform:translateY(-2px) rotate(225deg); }
+.mapArrowBtn .chev.left { transform:translateX(2px) rotate(-45deg); }
+.mapArrowBtn .chev.right { transform:translateX(-2px) rotate(135deg); }
+/* Chevrons live just outside the map frame so they read as "there is more
+   this way" rather than as controls sitting on top of the artwork. */
+#mapPreview { position:relative; }
+#mapStage .mapArrowBtn { position:absolute; }
+#mapViewport:active { cursor:grabbing; }
+
+/* The face, and which one is in use when. Until September 2026 the page
+   shipped Cythera's own Argos A Nouveau in res/ and drew in it from the first
+   paint, so a visitor who had opened no file at all was already reading the
+   game's typeface off this repository. The maintainer's call, 12 September:
+   don't. A page with no game in it should not be set in the game's face, and
+   a game-derived font should not be served from here to do it.
+
+   So the face before a file is Chicago Kare, Duane King's MIT reproduction of
+   Susan Kare's 1984 Chicago -- the typeface the Mac this game ran on was set
+   in, which is the right thing for a tool about it to wear while empty. Once
+   an archive is open its own sfnt is available as a choice and, unless the
+   reader has chosen otherwise, becomes the face; installGameFont still makes
+   the TrueType whatever the page is drawing in, so the file's font can be
+   inspected and exported without being imposed.
+
+   Every stack below names var(--face), and setFace() is the one place that
+   writes it. Chicago Kare covers ASCII and most of Mac Roman but not a
+   handful of marks this page uses, so the stack falls through -- first to
+   Carthage Sans and then to a system sans.
+
+   THE SECOND FACE IS THE GAME'S OWN DIVISION. The data file's twelve `TxSt`
+   styles put Argos A Nouveau on Sys Large, Sys Small and the three Lang0
+   sizes, and **Geneva 9, 9 and 10 on Labels, Stats and Text** -- so the game
+   sets its chrome in its own face and everything informational in the small
+   system sans. `--face-text` is that second role: prose, tables, resource
+   labels and the game's own text, in Kelsey Higham's pixel-exact Geneva 9.1,
+   while headings, buttons, tabs, the crumb and every tooltip keep `--face`.
+   A reader who picks a face in Settings gets it for both; the split is what
+   the page does when it has not been told otherwise.
+
+   Carthage sits between them because it carries two of the three marks that
+   were falling all the way through, and they are the frequent ones: the
+   crumb's angle quote, which this page sets 34 times, and the middot, 18.
+   The en dash is in neither and still reaches the system sans, along with a
+   dozen arrows and boxes used once or twice each. Carthage Sans is Brian
+   Connors's reimagining of Espy Sans, which is the face the program's own
+   styles name for Text and for all three Lang0 sizes, so the mark a reader
+   sees in place of Chicago's is from the same machine rather than from
+   Helvetica. 5.2 KB of woff2; NOTICE says whose it is. */
+@font-face { font-family: 'ChicagoKare'; src: url('res/ChicagoKare-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Carthage'; src: url('res/CarthageSans-Regular.woff2') format('woff2'); font-display: swap; }
+@font-face { font-family: 'Geneva9'; src: url('res/Geneva9-1-Regular.woff2') format('woff2'); font-display: swap; }
+:root { --gold: rgb(249,248,111); --panel: rgba(20,18,14,.86); --edge: #9b8850;
+  --face: 'ChicagoKare', 'Carthage', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --face-text: 'Geneva9', 'Carthage', -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif; }
+html, body { min-height:100%; }
+/* The game's own rule, restated 8 September 2026: text you read is white,
+   text you can click is --gold, and the quiet labels are a neutral grey so
+   nothing that is not a link looks like one. Nothing is set in capitals:
+   Argos in capitals is hard to read. */
+/* font-synthesis:none because Argos ships one weight: where the page asks
+   for bold the browser was thickening the regular outlines itself, and on
+   a glyph drawn from overlapping contours (the capital R) the thickening
+   shows as an outlined letter. Bold text now renders regular in Argos;
+   the code faces keep their real bold. */
+body { color:#fff; font-family:var(--face-text); font-synthesis:none;
+  /* The top inset clears the two fixed controls -- the data file on the left,
+     Search on the right -- and nothing more. It was 16px plus a row for the
+     links, which is most of a thumb on a phone spent on nothing. */
+  padding:12px 16px calc(96px + env(safe-area-inset-bottom));
+  background-color:#211c16;
+  /* The texture is resource 0x8F00, decoded from the archive at load time and
+     installed as a data: URL (see installBackgroundTexture). No remote image,
+     nothing to 404, and a modded archive changes the wallpaper too. The
+     gradient below is only a scrim so gold text stays legible. */
+  background-image:linear-gradient(rgba(14,10,6,.62),rgba(20,15,9,.62));
+  background-repeat:repeat; background-size:auto,128px;
+  /* The planks scroll with the page. They were fixed, which a phone ignores
+     anyway, and for an hour on 9 September 2026 they moved at half speed,
+     which the maintainer found distracting. */
+  background-attachment:scroll, scroll; }
+/* The frame image used to be stretched over the entire viewport at .58
+   opacity, which discoloured everything between the top and bottom borders.
+   Mask it down to just the edges so the ornament survives and the middle
+   shows the plain texture. */
+/* One dialogue frame, the outermost. There were two stacked -- this one at
+   inset 7px and #frameFill's border-image at inset 24px -- which read as a
+   double border and darkened everything between them. #frameFill is gone. */
+/* The game's dialogue box is 552x336, a 4px band top and bottom, 8px each
+   side, and every pixel between them a one-pixel checkerboard of
+   rgb(31,0,183) and nothing (the game's colour is clut 256 entry 1, 0,0,168,
+   and the frame is tile 0x19D; see .tabSheet). A capture of it used to be stretched over the
+   whole viewport, which made the entire page one blue box and left the sheets
+   inside it nothing to sit on. Now only its border frames the viewport, at
+   half strength, and the boxes are the folder sheets below (.tabSheet), which
+   are built from the same file and the same checkerboard -- so what is on
+   screen is the game's layering: brown planks, and a dithered blue box drawn
+   over them. */
+/* No frame round the viewport since 9 September 2026: the dialogue border
+   that edged the screen at half strength was the maintainer's to keep and
+   he asked for it gone. The folder sheets (.tabSheet) still wear it. */
+h2, #soundLabel { color:#fff !important; font-family:var(--face); }
+.cell .lbl, .cell .resid { color:var(--gold) !important; font-family:var(--face-text); }
+/* A label is two lines at most and stays inside its cell; a long unit name
+   used to run out of the square (the maintainer, 9 September 2026). */
+.cell { overflow:hidden; }
+.cell .lbl { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; max-width:100%;
+  /* The cell is a flex column of a fixed height, and a clamped box has no
+     minimum height of its own, so when the caption under it ran to two
+     lines the NAME was what shrank -- to nothing, on a desktop, where the
+     prop and monster galleries showed a sprite over a bare hex id. The
+     name keeps its size; what overflows is clipped at the foot. */
+  flex:0 0 auto; }
+#soundPreview, pre { background:var(--panel); border-color:var(--edge) !important; }
+#singlePreview { background:transparent !important; border:0 !important; }
+#singleControls, #pickerWrap { background:transparent !important; border:none !important; }
+/* Stone plaques with angled ends, matching the in-game menu buttons. */
+/* Flat interaction language, by request: anything you can click is YELLOW
+ * text, everything you only read is white-ish; no carved-stone plaques, no
+ * clip paths, no bevels. Interactive = coloured, not decorated. The old
+ * hexagonal stone buttons live in git history if the look is ever missed. */
+button { color:var(--gold); font-family:var(--face); letter-spacing:.04em;
+  position:relative; border:0; border-radius:4px; padding:10px 14px; min-height:44px;
+  background:transparent;
+  font-weight:600; font-size:0.9375rem; cursor:pointer;
+  touch-action:manipulation; }
+button:hover { text-decoration:underline; background:rgba(255,255,255,.05); }
+button:active { filter:brightness(.9); box-shadow:0 1px 2px rgba(0,0,0,.8); }
+button.secondary, .modebtns button.inactive {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.12) 0 2px, rgba(255,255,255,0) 3px),
+    linear-gradient(160deg,#797365 0%,#575147 30%,#413d36 60%,#5f594e 100%);
+  color:#e2d6ab; }
+select, input[type=file] { color:var(--gold); background:rgba(25,22,17,.94); border:1px solid var(--edge); font-family:var(--face); }
+/* The browser's own "Choose File" button was the one control on the site
+   drawn in the platform's grey; it wears the section chip's shape. */
+input[type=file]::file-selector-button { font-family:var(--face); color:var(--gold); background:#1d1a15;
+  border:1px solid var(--edge); border-radius:13px; padding:4px 12px; margin-right:10px; cursor:pointer; }
+input[type=file]::file-selector-button:hover { border-color:var(--gold); }
+
+/* Custom-styled dropdowns (categorySelect + residSelect) matching the
+   parchment/gold theme, replacing the plain OS-default select look. */
+select { appearance:none; -webkit-appearance:none; -moz-appearance:none; position:relative; cursor:pointer;
+  background-image:linear-gradient(160deg, rgba(60,52,38,.9), rgba(20,17,12,.94) 55%, rgba(50,44,32,.9)),
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'><path d='M1 1L7 8L13 1' stroke='%23f9f86f' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat; background-position:center, right 14px center; background-size:100% 100%, 12px 8px;
+  border:1px solid var(--edge); border-radius:8px; padding:10px 40px 10px 14px !important;
+  box-shadow:inset 2px 2px 3px rgba(255,255,255,.10), inset -3px -3px 5px rgba(0,0,0,.55), 0 2px 4px rgba(0,0,0,.5);
+  transition:box-shadow .15s ease, border-color .15s ease; }
+select:hover { border-color:#f9f86f; box-shadow:inset 2px 2px 3px rgba(255,255,255,.14), inset -3px -3px 5px rgba(0,0,0,.55), 0 0 6px rgba(249,248,111,.35); }
+select:focus { outline:none; border-color:#f9f86f; box-shadow:inset 2px 2px 3px rgba(255,255,255,.14), inset -3px -3px 5px rgba(0,0,0,.55), 0 0 10px rgba(249,248,111,.55); }
+select option { background:#181410; color:var(--gold); padding:8px; }
+
+#zoomControls { position:sticky; bottom:8px; z-index:5; max-width:640px; margin:12px auto 0; padding:8px 12px; background:rgba(20,18,14,.94); border:1px solid var(--edge); border-radius:8px; }
+#resourceNav { display:flex; gap:8px; margin:10px auto 0; max-width:640px; }
+#resourceNav button { flex:1; }
+#backToSheet { display:none; }
+#waveform { display:block; width:100%; height:100px; background:#090806; border:1px solid var(--edge); margin:0 0 10px; }
+.hiddenWhite { display:none !important; }
+
+/* v22 presentation corrections */
+/* An !important override here was loading a stock photo from a Cloudinary URL
+   and painting it over the whole page -- that is where the purple came from.
+   It also defeated the rule further up that uses the game's own 0x8F00 texture,
+   which is the intended background and is already extracted into the repo.
+   Override deleted so the real one applies; the tint below just darkens it
+   enough for gold text to stay legible. */
+
+select, option { line-height:1.4 !important; min-height:42px; padding-top:8px !important; padding-bottom:8px !important; }
+select { font-family:var(--face); }
+/* ---- Flat controls -----------------------------------------------------
+   The stone plaques are gone by request: anything clickable is YELLOW text,
+   anything you only read is white-ish, and nothing is carved, bevelled or
+   riveted. The old look (fractal-noise stone, bolt studs, engraved text)
+   lives in git history if it is ever missed. !important stays because the
+   base button rule earlier in the sheet also uses it. */
+button { line-height:1.35 !important; min-height:44px;
+  padding:8px 14px !important;
+  color:var(--gold) !important;
+  background:transparent !important;
+  border:0 !important; border-radius:4px !important;
+  clip-path:none !important; box-shadow:none !important; text-shadow:none !important;
+  font-weight:600 !important; letter-spacing:.035em; }
+.toolbar button, .actionRow button,
+#sheetGrid button, #mapPreview button, #charControls button
+  { padding-left:10px !important; padding-right:10px !important; font-size:0.8125rem !important; min-height:34px !important; }
+button:hover { color:#ffe98a !important; text-decoration:underline; background:rgba(255,255,255,.05) !important; }
+button::before, button::after { display:none !important; }
+/* The way round a gallery from an open resource: a quiet line of small links
+   under the gallery's chips, not four plaques. They were 1.18rem, bold and
+   52 px tall, two to a row on a phone, and took more of the screen above a
+   listing than the listing's own head (the maintainer, 23 September 2026). */
+#resourceNav { justify-content:center; flex-wrap:wrap; max-width:none !important; gap:2px 18px !important; margin:4px auto 6px; }
+#resourceNav button { flex:none; width:auto; font-size:0.8125rem !important; font-weight:400 !important;
+  min-height:30px !important; padding:4px 6px !important; margin:0 !important; letter-spacing:0; opacity:.75; white-space:nowrap; }
+#resourceNav button:hover { opacity:1; }
+.resid, .hex, #residSelect { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important; letter-spacing:.02em; }
+#residSelect option { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important; }
+#zoomControls input[type=range] { touch-action:none; cursor:ew-resize; pointer-events:auto; }
+
+.cell.wide { grid-column: span 2; }
+#sheetGrid.landscapeGrid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+
+/* ---- v39 layout containment -------------------------------------------
+   Previously every control was a full-bleed block sitting directly on
+   <body>, whose 16px padding was narrower than the decorative frame drawn
+   at inset:24px -- so buttons, selects and the map canvas visually spilled
+   past the frame. Everything now lives inside a width-constrained shell
+   that clears the frame, and no child is allowed to exceed its container. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { max-width:100%; overflow-x:hidden; }
+body { padding:0 !important; }
+/* The top inset was 44px, and 40px on a phone, from when the two controls
+   at the top were fixed to the viewport and the page had to clear them.
+   They scroll with the page since 9 September 2026, so the inset is the
+   ordinary margin above a heading. */
+#appShell { max-width:900px; margin:0 auto; padding:10px 34px calc(112px + env(safe-area-inset-bottom)); }
+@media (max-width:520px) { #appShell { padding:6px 18px calc(104px + env(safe-area-inset-bottom)); } }
+
+/* Never let a control or media element push past its parent. */
+#appShell button, #appShell select, #appShell input, #appShell pre,
+#appShell canvas, #appShell img, #appShell div { max-width:100%; }
+button, select { white-space:normal; overflow-wrap:break-word; word-break:normal;
+  hyphens:none; font-size:clamp(0.92rem, 3.4vw, 1.08rem) !important; }
+
+/* The blanket max-width:100% above also applied to the map's backing canvas,
+   squashing a 1024px map down to the viewport width before the pan/zoom
+   transform then scaled it again -- which is why maps opened as a thumbnail
+   pinned to the corner. These canvases are positioned by transform, by
+   scroll, or by their own left/top, so they must keep their true pixel size.
+
+   #mapDetailLens was missed when this exemption was written: it is a child
+   of #mapViewport rather than of #mapCanvasWrap, and it is likewise
+   deliberately WIDER than its container -- a quarter-viewport
+   margin on each side, so a drag can slide it instead of dropping to the
+   blurry base. max-width:100% squashed those 1.5 viewport widths into one
+   while the explicit height stayed put: the painted detail was compressed
+   horizontally, drifting further left the further right you looked, and the
+   rightmost quarter of the viewport had no lens over it at all. That reads
+   as "the left of the map is sharp, the right is offset and blurry", and it
+   showed up on iOS first only because the iOS canvas budget puts the world
+   map at TS=4, where the lens does not engage until the zoom slider is at
+   its 400% ceiling. It was equally wrong everywhere. */
+#mapViewport canvas, #mapCanvasWrap canvas, #canvasViewport canvas { max-width:none !important; }
+select { text-overflow:ellipsis; }
+
+/* Scroll panes get a sane height instead of running off-screen. */
+pre { max-height:52vh !important; overflow:auto; overscroll-behavior:contain; }
+/* The line under the gallery saying what is open. It is a <pre> because the
+   harnesses read its text, but it is a caption, not a console: the text
+   face at caption size, grey, and no box. It sat in a black monospace slab
+   at 18px, which read as a debugger's readout at the foot of every view. */
+#output { background:none !important; border:0 !important; padding:8px 2px 0; margin:6px 0 0; max-height:none !important;
+  font-family:var(--face-text); font-size:0.75rem; line-height:1.45; color:#b5b2a8; text-align:center; white-space:pre-wrap; }
+#textContent { max-height:56vh !important; }
+
+/* The map canvas is deliberately larger than the viewport (it pans/zooms),
+   so the viewport itself must clip rather than let the canvas escape. */
+#mapViewport { max-width:100%; overflow:hidden; position:relative;
+  border:1px solid var(--edge); border-radius:8px; background:#000; touch-action:none; }
+#mapCanvasWrap { transform-origin:0 0; will-change:transform; }
+
+/* The detail lens's "sharpening" badge. The delay is on the appearance only,
+   so a repaint that lands quickly never flashes it and one the reader is
+   actually waiting through does show up. See setLensBusy. */
+#mapLensBusy { position:absolute; right:8px; bottom:8px; z-index:6; pointer-events:none;
+  font-size:.72rem; letter-spacing:.05em; padding:3px 10px; border-radius:999px;
+  background:rgba(0,0,0,.66); color:#fff; border:1px solid rgba(190,175,130,.35);
+  opacity:0; transition:opacity .14s ease; }
+#mapLensBusy.on { opacity:1; transition-delay:.13s; }
+@media (prefers-reduced-motion: reduce) { #mapLensBusy { transition:none; } }
+#singlePreview { overflow:hidden; }
+#singlePreview > * { max-width:100%; }
+
+/* Headings and status lines wrap instead of forcing horizontal scroll. */
+h2, #sourceStatus, #output, #textLabel, #soundLabel { overflow-wrap:anywhere; }
+
+/* Readable dialogue rendering for script/text resources. */
+.dlgWrap { background:var(--panel); border:1px solid var(--edge); border-radius:8px;
+  padding:12px 14px; margin-bottom:12px; max-height:52vh; overflow:auto; }
+.dlgLine { margin:0 0 10px; line-height:1.55; color:#fff; overflow-wrap:anywhere; }
+.dlgOff { color:#b5b2a8; font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:.78em; margin-right:8px; }
+.dlgKw { color:#fff; font-weight:700; }
+.dlgSep { color:#b5b2a8; }
+
+/* The conversation view: topics extracted from the script's own
+   conversation_response chain, not from the string sweep. */
+.convHead { color:#b5b2a8; font-size:.85em; margin:0 0 10px; }
+.convHead .sv-chip { font-size:.9em; }
+.convCard { border-top:1px solid rgba(155,136,80,.35); padding:8px 0 4px; }
+.convCard.convHit { background:rgba(249,248,111,.08); }
+.convKw { display:inline-block; font-family:ui-monospace,Menlo,Consolas,monospace;
+  color:#fff; border:1px solid rgba(155,136,80,.5); border-radius:10px;
+  padding:0 8px; margin:0 6px 4px 0; font-size:.85em; }
+.convBadge { display:inline-block; color:#b5b2a8; font-size:.78em;
+  border:1px dashed rgba(155,136,80,.5); border-radius:10px;
+  padding:0 7px; margin:0 6px 4px 0; }
+.convSub { margin-left:18px; border-left:1px solid rgba(155,136,80,.3);
+  padding-left:10px; }
+.convLink { color:#f9f86f; cursor:pointer; font-weight:700; }
+.convLink:hover { text-decoration:underline; }
+/* A prompt as the player types it (the word the text names), and beside it
+   what the game stores and matches; a character's portrait and opening line
+   at the head; a heading where the topics of a group they answer as begin. */
+.convAsk { display:inline-block; color:#fff; font-weight:700; letter-spacing:.5px; margin:0 6px 4px 0; }
+.convAlso { display:inline-block; color:#b5b2a8; font-size:.8em; margin:0 6px 4px 0; }
+.convWho { display:flex; gap:12px; align-items:flex-start; margin:0 0 12px; }
+.convWho b { color:#fff; }
+.convFace { width:64px; height:64px; flex:none; image-rendering:pixelated; border:1px solid var(--edge); border-radius:3px; }
+.convAs { color:#b5b2a8; margin:14px 0 4px; padding-top:8px; border-top:2px solid rgba(155,136,80,.55); }
+
+/* Zoom crops inside a fixed viewport instead of stretching the page, so the
+   slider stays put instead of being shoved down the screen as you zoom in. */
+/* Fixed height, not max-height: a growing box still pushes the zoom slider
+   down the page, which is the thing that made the scrubber move mid-drag. */
+/* Checkerboard so a cut-out portrait reads as transparent instead of sitting
+   on a black slab inside a frame. */
+/* No checkerboard: transparent areas show the app's own blue/indigo
+   background straight through, same as everywhere else in the page. */
+#canvasViewport { max-width:100%; height:52vh; overflow:auto; margin:0 auto 10px;
+  background:transparent;
+  border:0; border-radius:6px;
+  -webkit-overflow-scrolling:touch; overscroll-behavior:contain; display:flex; }
+#canvasViewport canvas { margin:auto; image-rendering:pixelated; flex:0 0 auto; }
+#canvasViewport.cropped { outline:2px solid var(--gold); outline-offset:-2px; }
+/* Transparent pixels were picking up a grey slab from the panel behind them.
+   Nothing between the canvas and the page background. */
+#canvas, #canvasViewport canvas, .cell canvas, .cellimgwrap canvas { background:transparent !important; }
+.cellimgwrap { background:transparent !important; }
+/* 8px monospace in an 84px box fits a lot of characters and none of them can
+   be read. Prose gets the page's own serif at a size a person can take in at a
+   glance, and the tail is faded out rather than chopped square. */
+.cellChars { font:11px/1.32 var(--face-text); color:var(--gold);
+  background:#12100c; border:1px solid #4a432f; border-radius:4px;
+  width:84px; height:84px; padding:5px 6px; overflow:hidden; word-break:normal;
+  overflow-wrap:break-word; hyphens:auto;
+  text-align:left; white-space:normal;
+  -webkit-mask-image:linear-gradient(#000 62%, rgba(0,0,0,.15) 100%);
+  mask-image:linear-gradient(#000 62%, rgba(0,0,0,.15) 100%); }
+/* A Functions gallery as a list (renderContactSheet): a row per script, read
+   down, rather than a tile per script too small for its text. The name is
+   gold because the row is what a tap opens; the prose is the script's own
+   words in white; the calls are code, in the code's face. !important where
+   the tile rules above carry it. */
+#sheetGrid.scriptList { grid-template-columns:1fr !important; gap:6px !important; }
+#sheetGrid.scriptList .cell.scriptRow { height:auto !important; display:block; text-align:left; padding:9px 12px !important; }
+.scriptRow .srHead { display:flex; align-items:baseline; gap:4px 12px; flex-wrap:wrap; }
+#sheetGrid .scriptRow .lbl { display:block !important; -webkit-line-clamp:unset; font-family:var(--face) !important; font-size:1.0625rem; max-width:none; margin:0; }
+#sheetGrid .scriptRow .lbl.srUnnamed { font-weight:400; opacity:1; }
+#sheetGrid .scriptRow .resid { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace !important; font-size:0.6875rem; opacity:.8; margin:0; }
+.scriptRow .srKind { color:#fff; font-size:0.8125rem; }
+.scriptRow .srProse { color:#fff; font-size:0.9375rem; line-height:1.45; margin-top:4px;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.scriptRow .srCalls { color:#fff; opacity:.85; font:0.6875rem/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  margin-top:3px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.cellChars.binary { font:9px/1.3 ui-monospace,Menlo,Consolas,monospace; color:var(--gold); opacity:.72;
+  -webkit-mask-image:none; mask-image:none; }
+/* One colour for every name. There used to be three -- gold for a name read
+   out of the archive, a duller ochre plus a dagger for one this tool supplies,
+   grey italic for none at all -- which meant the gallery was colour-coded on a
+   distinction most readers never needed. Provenance is a setting (off by
+   default) plus, where a supplied name is showing, the tag below. */
+.cell .lbl, .cell .lbl.placeholder { color:var(--gold) !important; font-style:normal; font-weight:600; }
+.cell .lbl.nolabel, .cell .lbl.placeholder { font-weight:400; opacity:.62; }
+/* Replaces the dagger. A footnote mark with no footnote told a reader that
+   something was special about the name without ever saying what; a two-letter
+   tag says it outright and still fits on one line of a gallery caption. */
+.guessTag, .nameOffTag { display:inline-block; margin-left:5px; padding:0 5px; border-radius:8px;
+  border:1px solid #6a5f3e; background:#241f17; color:#b5b2a8;
+  font-family:system-ui, sans-serif; font-size:0.5625rem; font-weight:600; letter-spacing:.6px;
+  text-transform:uppercase; vertical-align:2px; }
+.nameOffTag { border-style:dashed; opacity:.7; text-transform:none; letter-spacing:0; font-weight:400; }
+#labelLegend { font-size:0.75rem; color:#b5b2a8; margin:4px 0 2px; text-align:center; }
+/* ---- The folder tabs ---------------------------------------------------
+   Three rows of manila tabs, nested: Entities / Components / Data on top, what
+   each holds below it, and a third row where a branch goes deeper. Each row
+   is the lip of a folder, the folders sit one inside the next, and the
+   innermost holds the sheet -- the game's dialogue box -- that everything is
+   drawn on. The look is At Ease's folder (see the block below): outlined
+   card with a hard shadow, the selected tab taller so it juts above its neighbours, and a tab
+   whose join is not traced yet (Audio, the PEF, the Combat AI files) faded
+   rather than removed, so the shape of the whole is visible before the whole
+   is done.
+
+   The tabs are <button>s for the keyboard's sake, and the page's base button
+   rule further up sets nearly everything !important (flat gold text, no
+   background, no clip-path). Every property below that the base rule also
+   sets is therefore !important too, and wins on specificity; nothing else
+   would let a button look like card. `.ftab` rather than `.tab` because the
+   text viewer's Decoded/Strings/Hex row already owns `.tab`. */
+#tabShell { margin:6px 0 10px; }
+/* The site's name and version, at the top between the two fixed buttons. */
+#topBar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 4px; position:relative; }
+#brand { flex:1 1 auto; text-align:left; margin:0; font-size:0.8125rem; letter-spacing:.04em; color:#b5b2a8; min-width:0; white-space:nowrap; }
+#brand .brandName { color:#fff; font-size:1.0625rem; font-weight:600; }
+#brand .brandVer { font-weight:400; }
+#brand .brandTile { width:20px; height:20px; image-rendering:pixelated; vertical-align:-4px; margin-right:2px; }
+#brand .brandVer { font-family:ui-monospace,Menlo,monospace; font-size:0.6875rem; letter-spacing:.04em; color:#8c8980; }
+/* The row scrolls sideways, so it clips: a tab cannot paint below the row's
+   own edge, and an open tab hanging a pixel over the folder was clipped to
+   nothing, which on a fractional device-pixel ratio left the folder's top
+   line showing under the open tab (the maintainer's phone, 10 September
+   2026). So the folder is pulled 2px up under the row instead, the row
+   stacked above it: the open tab reaches the row's foot and covers the
+   line, the others stop 2px short and the line runs under them. */
+.ftabRow { display:flex; align-items:flex-end; padding:0 0 0 10px; overflow-x:auto; overflow-y:hidden;
+  position:relative; z-index:2; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+.ftabRow::-webkit-scrollbar { display:none; }
+/* Plain card, one colour at every level (the maintainer, 10 September 2026:
+   no texture; the At Ease outline and grain of v1.44.0 lasted an hour). A
+   tab is a rounded top on the same card: unselected in a darker card that
+   lifts a pixel and lightens under the pointer, the open tab the folder's
+   own colour hanging a pixel over it so the two are one piece. Nesting
+   shows by each folder's own soft shadow and faint edge. The base button
+   rule sets most of this !important, so these are too. */
+:root { --card:#e2cf99; --cardDark:#b9a266; --cardHover:#d2bd7e; }
+.ftab { flex:0 0 auto; display:flex !important; align-items:center; gap:6px; cursor:pointer;
+  margin:0 0 2px -4px; white-space:nowrap; width:auto; position:relative; z-index:1;
+  padding:6px 13px 5px !important; min-height:0 !important; line-height:1.2 !important;
+  font-family:var(--face); font-size:0.7812rem !important; font-weight:600 !important;
+  letter-spacing:0; color:#3a2a0c !important; text-shadow:none !important; text-decoration:none;
+  border:1px solid rgba(0,0,0,.28) !important; border-bottom:0 !important; border-radius:9px 9px 0 0 !important;
+  box-shadow:inset 0 -3px 4px -2px rgba(0,0,0,.25) !important;
+  background:var(--cardDark) !important; transition:background .12s, transform .12s; }
+.ftab:hover { color:#000 !important; text-decoration:none; background:var(--cardHover) !important; transform:translateY(-1px); }
+.ftab:focus-visible { outline:2px solid var(--gold); outline-offset:-3px; }
+.ftab canvas { width:18px !important; height:18px !important; image-rendering:pixelated; margin:0; flex:0 0 auto; }
+.ftab.sel, .ftab.sel:hover { padding:9px 15px 8px !important; color:#000 !important; z-index:3; margin-bottom:0;
+  background:var(--card) !important; box-shadow:none !important; transform:none; }
+#tabFolder1 > .ftabRow, #tabFolder2 > .ftabRow { padding-top:4px; }
+#tabShell[data-depth="0"] .folder { margin-top:0; }
+.ftab.wip { opacity:.45; }
+.ftab.wip.sel { opacity:.78; }
+.ftab .tabBadge { font-size:0.625rem; line-height:1; padding:2px 5px; border-radius:8px;
+  background:#3a2a0c; color:#fff; font-family:ui-monospace,Menlo,Consolas,monospace; }
+/* The folder's edge runs up and round the open tab: the tab wears the same
+   edge on its top and sides and hangs a pixel over the folder, covering the
+   folder's top edge under it, so the outline is one curve. All four
+   corners round (the maintainer, 10 September 2026). */
+.folder { padding:5px; border:1px solid rgba(0,0,0,.28); border-radius:5px; box-shadow:0 2px 7px rgba(0,0,0,.5);
+  background:var(--card); margin-top:-2px; }
+.folder.f2, .folder.f3 { background:var(--card); }
+/* The sheet: the dialogue box itself, and since 10 September 2026 both of
+   its parts come out of the open file (installDialogueBox, which has the
+   trace). The frame is game tile 0x19D cut into 4px bands top and bottom
+   and 8px bands at the sides, which is what the executable's FrameBox does
+   with the same tile for every bordered window; before a file is open there
+   is no frame, only a plain line. The
+   interior is the game's own box: the scene beneath, then QuickDraw's 50%
+   gray pattern painted over it in OR mode in the fore colour of entry 1 of
+   the game's colour table (clut 256: 0x0000 0x0000 0xA800, the old
+   sixteen-colour blue). A 2px CSS checkerboard of that blue beat against
+   some screens as moiré, so the page paints the colour the checker averages
+   to, blue at half strength, which is what the dither was for on a screen
+   of the period. The thin dark scrim on top is the one concession to
+   reading yellow text on it. */
+/* The frame and the blue both come out of the open file now
+   (installDialogueBox). A capture of this same frame, upside down, was
+   shipped in res/ until the page stopped using it (13 September 2026) and
+   the maintainer removed it (17 September).
+
+   The blue here is the DEFAULT, and it is deliberately showing before a file
+   is open: seeing it is how a reader knows they are looking at the
+   hard-coded figure rather than the file's own (the maintainer's point, and
+   a better one than hiding it). It must stay equal to
+   DLG_BOX_DEFAULTS.blue, which is the same figure in the script, and a check
+   holds the two together. The frame cannot do the same -- its tile lives in
+   the archive -- so the border is a plain line until a file arrives. */
+.tabSheet { --boxBlue:rgba(0,0,168,.5); }
+.tabSheet { border:1px solid rgba(255,255,255,.5);
+  background:linear-gradient(rgba(10,6,4,.28), rgba(10,6,4,.28)),
+             linear-gradient(var(--boxBlue), var(--boxBlue));
+  padding:10px 8px 14px; min-height:120px;
+  /* Every line on the sheet gets a shadow: the dither is half blue and half
+     plank, and 12px muted text was unreadable on it without one. */
+  text-shadow:0 1px 2px rgba(0,0,0,.9); }
+.tabSheet #labelLegend, .tabSheet #filterNote, .tabSheet .propHead, .tabSheet #exportNote,
+.tabSheet .sv-why, .tabSheet .mapToggleGroup .mtgLabel, .tabSheet .mapToggleGroup.mtgNotes,
+.tabSheet .crumbNote { color:#fff; }
+/* A branch only two deep (Entities) has no third row: the row hides and the
+   innermost folder collapses to nothing, so the sheet sits directly in the
+   second folder. Before a file is open there are no rows at all, and the
+   sheet stands alone on the planks holding the status line. */
+#tabShell[data-depth="2"] #tabRow3, #tabShell[data-depth="0"] .ftabRow { display:none; }
+#tabShell[data-depth="2"] #tabFolder3, #tabShell[data-depth="0"] .folder
+  { padding:0; background:none; box-shadow:none; border:0; border-radius:0; }
+/* Pinned opposite the data-file button and sized to match it, rather than
+   taking a row of its own above the tabs. The row was most of the empty space
+   at the top of the page, and the two are the same kind of thing: the page's
+   own controls, out of the way of the thing you came to look at. */
+#editNotice { text-align:center; color:#fff; font-size:0.8125rem; margin:0 0 10px; padding:6px 10px;
+  background:rgba(20,18,14,.7); border:1px solid var(--edge); border-radius:8px; }
+/* The name on the left; Credits, Search and Settings spaced out on the
+   right as gold words the size of the name (the maintainer, 9 September
+   2026, after two other arrangements the same day). */
+#topLinks { display:flex; align-items:baseline; gap:24px; flex:0 0 auto; }
+.topLink { background:none !important; background-image:none !important; border:0 !important; padding:0 !important; margin:0;
+  min-height:0 !important; width:auto; color:var(--gold) !important; font-size:0.9375rem !important; letter-spacing:.02em;
+  clip-path:none !important; box-shadow:none !important; text-shadow:none !important; font-weight:600 !important; opacity:1; }
+.topLink::before, .topLink::after { display:none !important; }
+.topLink:hover { text-decoration:underline; background:none !important; }
+#archiveMenuBtn.urgent { font-size:1.0625rem !important; text-decoration:underline; }
+#navSub { display:flex; flex-wrap:wrap; gap:5px; justify-content:center; margin-bottom:4px; }
+/* The section chips wear the crumb button's look (the maintainer, 9
+   September 2026), at their own size; the open one is filled. */
+#navSub .navChip { background:#1d1a15; border:1px solid var(--edge); color:var(--gold); border-radius:14px; padding:4px 12px; }
+#navSub .navChip.active { background:#1d1a15; color:var(--gold); border:2px solid var(--gold); font-weight:600; }
+/* A group head with a note under it: the title white and a size up, the
+   note grey on its own line. The two were one grey line once the capitals
+   went (v1.30.0), and read as one sentence. */
+.propHead .groupTitle { display:block; color:#fff; font-size:0.9375rem; font-weight:600; }
+.propHead .groupNote { display:block; color:#8c8980; font-size:0.75rem; font-weight:400; margin-top:1px; }
+/* What the open section holds. It was #8c8980 at 0.75rem, which on the
+   purple of the sheet could not be read (the maintainer, 23 September 2026):
+   text worth printing is text to read, so it is white at reading size. */
+#navSubNote { text-align:center; color:#fff; font-size:0.875rem; margin:0 auto 10px; max-width:64ch; line-height:1.45; }
+/* The flat-button rule further down sets background, border, padding and
+   height with !important, and it was winning over the two rules above and
+   over every link built as a <button> inside the gallery: the open section
+   chip drew no fill, so "Tile Sheets" and "Sprites, by prop type" were two
+   gold headings with nothing to say which was showing; and a figure in a
+   sentence (srcNum) sat in a 34px box with 10px either side, which read as
+   a gap in the prose. Same weight, higher specificity. */
+#navSub .navChip, #sheetGrid .navChip { background:#1d1a15 !important; border:1px solid var(--edge) !important;
+  border-radius:14px !important; padding:4px 12px !important; min-height:0 !important; font-size:0.75rem !important;
+  width:auto; line-height:1.3 !important; }
+#navSub .navChip.active, #sheetGrid .navChip.active { background:#1d1a15 !important; color:var(--gold) !important;
+  border:2px solid var(--gold) !important; font-weight:600 !important; }
+#navSub .navChip:hover, #sheetGrid .navChip:hover { border-color:var(--gold) !important; text-decoration:none; }
+#navSub .navChip .navHex { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.85em;
+  font-weight:400; opacity:.7; margin-left:6px; }
+#sheetGrid .svLink { padding:0 !important; min-height:0 !important; font-size:inherit !important; line-height:inherit !important; }
+/* A detail view's own "All characters" is the second of the two backs (see
+   "Two kinds of back" in js/page-archive.js): the same pill as the trail's,
+   at the left, rather than a gold heading centred over the page. */
+#sheetGrid[style*="block"] > button.secondary:first-child { width:auto !important; margin:0 0 8px !important; min-height:0 !important;
+  padding:4px 12px !important; border-radius:14px !important; background:#1d1a15 !important; border:1px solid var(--edge) !important;
+  font-size:0.7812rem !important; font-weight:400 !important; letter-spacing:0; font-family:var(--face); display:inline-block; }
+#sheetGrid[style*="block"] > button.secondary:first-child:hover { border-color:var(--gold) !important; text-decoration:none; }
+/* A name set in the code face inside a sentence keeps the sentence's size. */
+.tabSheet code { font-size:0.9em; }
+#sheetGrid .sv-chip { padding:0 !important; min-height:0 !important; }
+.navChip { background:#1d1a15; border:1px solid var(--edge); color:var(--gold); border-radius:13px;
+  padding:5px 11px; font-size:0.6875rem; min-height:0; width:auto; margin:0; clip-path:none;
+  box-shadow:none; text-shadow:none; letter-spacing:0; }
+.navChip::after { display:none; }
+.navChip.active { background:#1d1a15; color:var(--gold); border:2px solid var(--gold); font-weight:600; }
+/* A chip that is a span is a name, not a link, and wears white. */
+span.navChip { color:#fff; }
+#propFilterWrap { margin:8px 0 2px; }
+#filterNote { font-size:0.75rem; color:#b5b2a8; min-height:15px; padding:2px 2px 0; }
+.propHead { grid-column:1/-1; text-align:left; color:#b5b2a8; font-size:0.6875rem;
+  letter-spacing:0; margin:12px 0 2px;
+  border-bottom:1px solid var(--edge); padding-bottom:4px; }
+.cell.propCell { height:150px; justify-content:flex-start; }
+.cell.propCell .cellimgwrap { flex:0 0 78px; height:78px; }
+/* A unit that covers more than one square takes more than one cell of the
+   grid, in the shape it is: the hydra is three squares by three and in a
+   cell sized for one it was cut off on every side, the gator is one by two.
+   The taller height is two rows plus the gap between them, so a big cell
+   still lines up with the single ones beside it. */
+/* A cell whose picture is taller than the ordinary image band grows to
+   hold it and no further; how far is set on the element, because it is the
+   picture that decides. The row it is in grows with it. */
+.cell.propCell.tallCell { height:auto; }
+/* Both search fields, one rule. type="search" carries WebKit's `searchfield`
+   appearance, and that appearance imposes the control font metrics on the
+   TEXT YOU TYPE while leaving the placeholder styled from this sheet -- which
+   is exactly the reported symptom: the prompt legible, the query itself
+   shrunk. `appearance:none` drops the native control, and an explicit
+   line-height and font-size then apply to the value as well. */
+#searchBox, #propFilter {
+  -webkit-appearance:none; appearance:none;
+  width:100%; box-sizing:border-box; padding:12px 14px; border-radius:8px;
+  border:1px solid var(--edge); background:rgba(25,22,17,.94); color:var(--gold);
+  -webkit-text-fill-color:var(--gold);
+  font-family:var(--face); font-size:1.125rem; line-height:1.35; }
+#searchBox::-webkit-search-decoration, #propFilter::-webkit-search-decoration { -webkit-appearance:none; }
+#searchBox::placeholder, #propFilter::placeholder {
+  color:#8c8980; font-size:0.9375rem; font-style:italic; -webkit-text-fill-color:#8c8980; }
+#searchResults { margin-top:10px; text-align:left; max-height:56vh; overflow:auto; }
+.sr-item { border-top:1px solid var(--edge); padding:9px 0; }
+.sr-lines { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.6875rem;
+  line-height:1.5; color:#fff; margin-top:5px; padding-left:4px;
+  border-left:2px solid #3a3527; padding-left:8px; white-space:pre-wrap; word-break:break-word; }
+/* A hit's line is the way to it: it opens the script ringed there. */
+.sr-lines a.srLine { color:var(--gold); cursor:pointer; text-decoration:none; }
+.sr-lines a.srLine:hover { text-decoration:underline; }
+/* Decoded / Strings / Hex used to be one scroll of concatenated text with
+   --- HEADERS --- between them, which meant scrolling past a 4KB hex dump to
+   reach the strings. Three panes, one visible at a time. */
+.tabbar { display:flex; gap:0; margin:12px 0 0; border-bottom:1px solid var(--edge); }
+.tabbar .tab { flex:1; background:none; border:0; box-shadow:none; clip-path:none;
+  border-radius:0; padding:9px 6px; min-height:0; width:auto; margin:0;
+  font-size:0.8125rem; color:var(--gold); opacity:.72; text-shadow:none; font-weight:400; letter-spacing:.02em;
+  border-bottom:2px solid transparent; }
+.tabbar .tab::after { display:none; }
+.tabbar .tab.active { color:var(--gold); opacity:1; border-bottom-color:var(--gold); font-weight:600; }
+.tabbar .tab:hover { filter:none; opacity:1; }
+.tabbar .tab.empty { opacity:.4; }
+pre.pane { background:#090806; color:#fff; padding:12px; overflow:auto; max-height:400px;
+  white-space:pre-wrap; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:0.8125rem; line-height:1.5; border:1px solid var(--edge); border-top:0; margin:0; }
+#paneHex { white-space:pre; font-size:0.6875rem; }
+#editBytesWrap { margin:8px 0; }
+#editCodeWrap { margin:8px 0; }
+#editCodeWrap textarea { width:100%; min-height:140px; box-sizing:border-box; font-family:ui-monospace, Menlo, monospace; font-size:0.8125rem; }
+#editCodeWrap input { width:7em; font-family:ui-monospace, Menlo, monospace; }
+.editCodeRow { display:flex; flex-wrap:wrap; gap:12px; margin:6px 0; }
+#editCodePreview { white-space:pre; overflow-x:auto; font-size:0.75rem; margin:8px 0; }
+#editBytesWrap textarea { width:100%; min-height:180px; box-sizing:border-box;
+  font-family:ui-monospace,Menlo,monospace; font-size:0.6875rem; line-height:1.5;
+  background:rgba(0,0,0,0.25); color:inherit; border:1px solid rgba(255,255,255,0.25); }
+#editBytesNote { font-size:0.6875rem; opacity:0.75; margin:4px 0; }
+.peForm { margin-top:6px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:0.6875rem; }
+.peForm label { white-space:nowrap; }
+.peForm input { font-family:ui-monospace,Menlo,monospace; font-size:0.6875rem;
+  background:rgba(0,0,0,0.25); color:inherit; border:1px solid rgba(255,255,255,0.25); }
+.peForm .inspDim { flex-basis:100%; }
+/* The convention for provenance: names the FILE supplies (0xF004 tile names,
+ * resource symbols like LKH_Guard, store symbols) are set in monospace; names
+ * this tool or the wiki supplies stay in the text face. A reader can tell at
+ * a glance which words the archive itself said. */
+.dataname { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.95em; }
+#ditherTool { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.75);
+  display:flex; align-items:center; justify-content:center; overflow:auto; }
+#ditherTool .dtPanel { background:#1d1a14; border:1px solid #5a5142; border-radius:8px;
+  padding:14px 16px; width:min(92vw, 620px); max-height:92vh; overflow:auto; }
+#ditherTool .dtHead { font-size:1rem; color:#fff; margin-bottom:10px;
+  display:flex; justify-content:space-between; align-items:center; }
+#ditherTool .dtRow { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:10px 0; }
+#ditherTool canvas { background:repeating-conic-gradient(#2a2a2a 0% 25%, #1c1c1c 0% 50%) 0 0/16px 16px;
+  image-rendering:pixelated; }
+#ditherTool select, #ditherTool input[type=range] { max-width:200px; }
+#textEdit { position:fixed; inset:0; z-index:1000; background:rgba(0,0,0,.75);
+  display:flex; align-items:center; justify-content:center; }
+#textEdit .dtPanel { background:#1d1a14; border:1px solid #5a5142; border-radius:8px;
+  padding:14px 16px; width:min(92vw, 560px); }
+#textEdit textarea { width:100%; min-height:120px; box-sizing:border-box; margin:8px 0;
+  font-family:var(--face-text); font-size:0.875rem; line-height:1.5;
+  background:rgba(0,0,0,.3); color:#fff; border:1px solid rgba(255,255,255,.25); }
+.dlgEdit { min-height:0; padding:0 6px; font-size:0.6875rem; opacity:.6; }
+.dlgEdit:hover { opacity:1; }
+.ridLink { color: var(--gold, #d9b64a); text-decoration: underline dotted; cursor: pointer; }
+.dswitch { display:flex; align-items:center; gap:6px; padding:7px 10px; font-size:0.6875rem;
+  color:#8c8980; background:#141210; border:1px solid var(--edge); border-top:0; }
+.dswitch button.dsw { background:none; border:1px solid var(--edge); box-shadow:none;
+  clip-path:none; border-radius:12px; padding:3px 11px; min-height:0; width:auto; margin:0;
+  font-size:0.6875rem; color:var(--gold); opacity:.72; text-shadow:none; font-weight:400; letter-spacing:0; }
+.dswitch button.dsw::after { display:none; }
+.dswitch button.dsw.active { color:var(--gold); opacity:1; border:2px solid var(--gold); font-weight:600; }
+/* A script's row sits on top of its pane rather than under a tab bar. */
+#listingSwitch { border-top:1px solid var(--edge); border-radius:6px 6px 0 0; flex-wrap:wrap; gap:6px; }
+#listingSwitch button.dsw { padding:3px 11px !important; min-height:30px; white-space:nowrap; }
+#listingSwitch + .dlgWrap { border-top:0; border-radius:0 0 8px 8px; }
+/* Code keeps its indentation: a wrapped line of a listing starts at the left
+   edge and reads as a statement of its own. It scrolls sideways instead. */
+#textContent.scriptCode { white-space:pre; overflow-x:auto; }
+/* The Read view: each function's code as sentences, nested as the blocks are. */
+#textContent.scriptRead { white-space:normal; font-family:var(--face); }
+.readFn { margin:0 0 14px; }
+.readHead { color:#fff; font-weight:700; margin:0 0 4px; }
+.readProse { color:#fff; margin:0 0 10px; }
+.readSum { color:#b5b2a8; font-size:.85em; margin:0 0 6px; }
+.readList { margin:0; padding-left:18px; }
+.readList li { color:#fff; margin:2px 0; line-height:1.45; overflow-wrap:anywhere; }
+.readAt { color:#8c8980; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.75em; margin-right:6px; }
+a.reflink { color:var(--gold); text-decoration:underline; cursor:pointer; }
+span.refnote { color:#b5b2a8; font-style:italic; }
+b.refname { color:#fff; font-weight:600; }
+span.refdead { color:#e07a5f; }
+span.refself { color:#8c8980; }
+/* Loading a custom archive is a rare, expert action, so it reads as a quiet
+   text link -- until the default archive fails to load, at which point it is
+   the only way forward and gets promoted to a full button (see .urgent). */
+/* Loading a custom archive is a rare, expert action. It sits in the bottom
+   corner at low opacity and out of the document flow, so it costs nothing at
+   the top of the page -- until the default archive fails to load, when it is
+   the only way forward and .secondary promotes it back to a real button. */
+button.linky { position:fixed; bottom:6px; right:8px; z-index:40;
+  background:rgba(12,11,9,.72); border:0; box-shadow:none; clip-path:none;
+  padding:3px 7px; border-radius:4px; min-height:0; width:auto; font-size:0.625rem;
+  color:var(--gold); text-decoration:none; text-shadow:none; font-weight:400;
+  letter-spacing:.04em; margin:0; display:block; opacity:.55; }
+button.linky:active { opacity:1; }
+#sourceStatus { font-size:0.6875rem; color:#7d7a72; opacity:.7; }
+#sourceStatus.failed { font-size:0.9375rem; opacity:1; }
+button.linky::after { display:none; }
+button.linky:hover { color:var(--gold); filter:none; }
+#sourceStatus.failed { color:#e6b96a; }
+.cellimgwrap { background:none !important; }
+.cell canvas { background:transparent !important; }
+
+/* Script view: what the resource is and what it is joined to, then its one
+   row of views. Shown and hidden by renderText; a stylesheet display:none
+   here kept it off every screen until 22 September 2026. */
+#scriptView { text-align:left; margin-bottom:10px; }
+.sv-head { margin-bottom:2px; }
+.sv-head .sv-id { font-size:1.125rem; color:#fff; font-weight:600; letter-spacing:0.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.sv-head .sv-lbl { font-size:1.125rem; color:#fff; margin-left:6px; }
+.sv-head .sv-kind { font-size:0.8125rem; color:#fff; margin-top:3px; letter-spacing:0; line-height:1.5; }
+#scriptRefs { margin:10px 0 4px; text-align:left; }
+#scriptRefs .partsTitle { color:#fff; font-size:0.75rem; }
+.sv-why { font-size:0.875rem; line-height:1.55; color:#fff; margin:0 0 12px; }
+.sv-facts { display:grid; gap:8px; margin-bottom:12px; }
+.sv-facts > div { background:#141210; border:1px solid var(--edge); border-radius:6px; padding:8px 10px; font-size:0.8125rem; line-height:1.5; color:#fff; }
+.sv-facts b { display:block; font-size:0.6875rem; letter-spacing:0; color:#b5b2a8; margin-bottom:2px; font-weight:600; }
+details.sv { margin:0 0 12px; border:1px solid var(--edge); border-radius:6px; background:#141210; }
+details.sv > summary { cursor:pointer; padding:9px 12px; font-size:0.8125rem; color:var(--gold); list-style:none; }
+details.sv > summary::-webkit-details-marker { display:none; }
+details.sv > summary::before { content:'\25B8 '; color:#b5b2a8; }
+details.sv[open] > summary::before { content:'\25BE '; }
+.sv-block { margin-bottom:14px; }
+.sv-block h4 { margin:0 0 7px; font-size:0.75rem; letter-spacing:0; color:#b5b2a8; font-weight:600; }
+.sv-chips { display:flex; flex-wrap:wrap; gap:3px 14px; }
+/* A chip was a pill: a box, a border, a monospace face. Since 9 September
+   2026 it is a link -- gold text, no box, the face of the text around it,
+   a grey note after it -- because the maintainer found the pills clunky
+   and large, and a page of them was more box than word. The `button`
+   rules further up set the plaque background, the angled clip-path and a
+   pair of bolt studs with !important, which is why every one of these is
+   !important too. .svLink is the same look for a link built inline. */
+.sv-chip { background:none !important; background-image:none !important; border:0 !important; border-radius:0 !important;
+           color:var(--gold) !important; padding:0 !important; font-size:0.8125rem !important; font-family:inherit;
+           cursor:pointer; min-height:0 !important; width:auto; margin:0 12px 2px 0; display:inline; line-height:1.5 !important;
+           clip-path:none !important; box-shadow:none !important; text-shadow:none !important; text-decoration:none;
+           font-weight:400 !important; letter-spacing:0; text-align:left; vertical-align:baseline; }
+.sv-chips .sv-chip { margin:0; }
+.sv-chip::before, .sv-chip::after { display:none !important; }
+.sv-chip:hover { background:none !important; color:var(--gold) !important; text-decoration:underline; filter:none; }
+.sv-chip i { font-style:normal; color:var(--gold); opacity:.72; font-size:0.9em; }
+.sv-chip em { font-style:normal; color:var(--gold); opacity:.72; font-size:0.9em; }
+.sv-warn { font-size:0.8125rem; line-height:1.55; color:#d8c98e; background:#1a1610;
+           border-left:3px solid var(--gold); padding:9px 11px; border-radius:0 4px 4px 0; }
+.sv-note { font-size:0.75rem; color:#b5b2a8; margin-top:5px; }
+/* A link in running text or a table cell: gold, no box, no icon, the size
+   of the text around it, with a quiet note after it. The chips carry an
+   icon and a hex and a pill, which is right for a strip of six under
+   "Made of" and wrong for seventy names in a table cell or one name in a
+   sentence; the maintainer called those clunky on 9 September 2026. */
+.svLink { background:none !important; background-image:none !important; border:0 !important; border-radius:0 !important; padding:0 !important;
+  margin:0; min-height:0 !important; width:auto; display:inline; font:inherit; font-size:inherit !important; color:var(--gold) !important;
+  letter-spacing:0; font-weight:400 !important; clip-path:none !important; box-shadow:none !important; text-shadow:none !important;
+  cursor:pointer; text-decoration:none; line-height:inherit !important; vertical-align:baseline; }
+.svLink::before, .svLink::after { display:none !important; }
+.svLink:hover { text-decoration:underline; background:none !important; }
+.svLink i { font-style:normal; color:var(--gold); opacity:.72; font-size:0.9em; }
+/* A number read off a script (srcNum) keeps the weight of the text around
+   it, so a bold figure in a rule stays bold, and the line it opens on is
+   ringed in the listing. */
+.svLink.srcNum { font-weight:inherit !important; }
+.listingHit { background:rgba(249,248,111,.16); box-shadow:0 0 0 1px rgba(249,248,111,.55); border-radius:2px; }
+/* An item page's sections fold, shut by default, each summary carrying a
+   line of what is inside so the shut page still reads. */
+details.itemFold { margin:8px 0 0; padding:7px 10px 6px; }
+details.itemFold[open] { padding-bottom:10px; }
+details.itemFold > summary.mechHead { margin:0; gap:8px; }
+details.itemFold[open] > summary.mechHead { margin-bottom:8px; }
+.foldTitle { color:#fff; font-size:0.8125rem; font-weight:600; }
+.foldGist { color:var(--gold); opacity:.72; font-size:0.7188rem; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+details.itemFold > summary:hover .foldTitle { color:var(--gold); }
+.foldAll { display:flex; gap:12px; justify-content:flex-end; margin:6px 0 0; font-size:0.7188rem; color:#8c8980; }
+/* The prop word on an item's page (v1.33.0): the sixteen bits, the readout,
+   the aspect rail and the two data bytes. The aspect cells are outlined and
+   the class cells filled so the two fields read as two; a set bit is white,
+   a clear one grey; the chosen slot is gold because it is the one thing
+   here that was clicked. --pwb is a bit cell's width and the one number to
+   change if the strip does not fit. */
+.pwBits { --pwb:22px; display:flex; gap:2px; overflow-x:auto; padding-bottom:2px; }
+.pwBit { width:var(--pwb); height:28px; flex:none; display:grid; place-items:center; font-family:ui-monospace,Menlo,Consolas,monospace;
+  font-size:0.8125rem; border:1px solid #33302a; background:#1c1913; color:#8c8980; }
+.pwBit.on { color:#fff; }
+.pwBit.pwAsp { border-color:#b5b2a8; }
+.pwBit.pwAsp.on { background:#2b2620; }
+.pwBit.pwCls.on { background:#33302a; }
+.pwBit.pwSpare { border-style:dashed; }
+.pwGap { width:6px; flex:none; }
+.pwKeys { --pwb:22px; display:flex; gap:2px; font-size:0.625rem; color:#8c8980; margin:2px 0 8px; white-space:nowrap; }
+.pwKeys span { flex:none; }
+.pwRead { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 14px; margin:0 0 6px; color:#b5b2a8; font-size:0.75rem; }
+.pwRead b { color:#fff; font-size:1.375rem; font-family:ui-monospace,Menlo,Consolas,monospace; font-weight:600; }
+.pwRail { display:grid; grid-template-columns:repeat(8,minmax(0,1fr)); gap:3px; margin:8px 0 4px; }
+.pwSlot { background:#1c1913 !important; background-image:none !important; border:1px solid #33302a !important; border-radius:4px !important;
+  color:#b5b2a8 !important; padding:3px 2px 4px !important; min-height:0 !important; width:auto; margin:0; display:flex; flex-direction:column;
+  align-items:center; gap:2px; min-width:0; font-family:inherit; font-size:0.625rem !important; letter-spacing:0; font-weight:400 !important;
+  clip-path:none !important; box-shadow:none !important; text-shadow:none !important; cursor:pointer; text-decoration:none !important; }
+.pwSlot::before, .pwSlot::after { display:none !important; }
+.pwSlot:hover { border-color:var(--gold) !important; color:var(--gold) !important; text-decoration:none !important; }
+.pwSlot.pwOn { border-color:var(--gold) !important; color:var(--gold) !important; background:#26211a !important; }
+.pwSlot.pwHome { box-shadow:inset 0 2px 0 #b5b2a8 !important; }
+.pwSlot.pwEdge { margin-left:3px; }
+.pwSlot .pwN { color:var(--gold); opacity:.72; font-family:ui-monospace,Menlo,Consolas,monospace; }
+.pwSlot.pwOn .pwN { opacity:1; }
+.pwSlot .pwArt { width:24px; height:24px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.pwSlot .pwArt canvas { width:20px !important; height:20px !important; image-rendering:pixelated; margin:0 !important; }
+.pwSlot .pwT { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.2; color:var(--gold); }
+.pwData { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin:4px 0 6px; font-size:0.75rem; color:#b5b2a8; }
+.pwData label { display:inline-flex; align-items:center; gap:6px; }
+.pwData input { width:64px; font:inherit; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.875rem; color:#fff; background:#1c1913;
+  border:1px solid #33302a; border-radius:4px; padding:3px 6px; }
+@media (max-width:640px) { .pwRail { grid-template-columns:repeat(4,minmax(0,1fr)); } .pwBits, .pwKeys { --pwb:18px; } }
+pre.sv-code { background:#090806; color:#fff; padding:11px; overflow:auto; max-height:360px;
+              white-space:pre; font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+              font-size:0.75rem; line-height:1.5; border:1px solid var(--edge); border-radius:4px; margin:0; }
+/* The map legend's swatches, in the colour of the chip they sit in. */
+.legendSwatch { display:inline-block; vertical-align:-1px; margin-right:5px; }
+.legendSwatch.box { width:9px; height:9px; box-sizing:border-box; border:1.5px solid currentColor; }
+.legendSwatch.line { width:14px; height:0; border-top:2px solid currentColor; vertical-align:3px; }
+
+/* Phones. The sizes come down rather than the look: the tab labels are pinned
+   small (the global font-size:clamp(...) !important on `button` otherwise
+   wins over .ftab's own 12.5px and blows them back up), the icons shrink to
+   match, and the category chips lose enough padding to fit two or three to a
+   row instead of one each. */
+@media (max-width:640px) {
+  /* The rows scroll sideways on a phone rather than wrap: a wrapped row of
+     tabs stops reading as the lip of a folder. */
+  .ftab { padding:5px 9px 4px !important; font-size:0.6875rem !important; gap:5px; }
+  .ftab.sel, .ftab.sel:hover { padding:8px 11px 6px !important; }
+  .ftab canvas { width:15px !important; height:15px !important; }
+  .tabSheet { padding:8px 4px 12px; }
+  #navSub { gap:4px; }
+  .navChip { font-size:0.6875rem !important; min-height:30px !important;
+    padding:5px 16px !important; }
+  .navChip::before { left:7px; right:7px; height:7px; margin-top:-3.5px; }
+  /* Cross-reference chips are narrow, and the bolt studs are positioned 16px
+     in from each end -- on a chip only 70px wide that put both studs on top of
+     the label. They are decoration on an element this small, so drop them and
+     keep the words legible. */
+  .sv-chip { font-size:0.6875rem !important; padding:4px 14px !important; }
+  .relChip { font-size:0.7188rem; padding:4px 9px 4px 5px; }
+  .sv-chip::before { display:none; }
+}
+@media (max-width:380px) {
+  .ftab { font-size:0.6562rem !important; padding:5px 7px 4px !important; }
+}
+/* The two views under Data that are tables rather than galleries. They span
+   the gallery grid, which is what #sheetGrid is. */
+.forkTable, .changesView { grid-column:1/-1; text-align:left; font-size:0.8125rem; }
+.tableScroll { grid-column:1/-1; overflow-x:auto; max-width:100%; }
+.forkTable { border-collapse:collapse; width:100%; min-width:520px; }
+.forkTable th { text-align:left; color:#b5b2a8; font-size:0.6875rem; 
+  letter-spacing:1.2px; padding:4px 6px; border-bottom:1px solid var(--edge); }
+.forkTable td { padding:4px 6px; border-bottom:1px solid rgba(155,136,80,.25); vertical-align:middle; }
+/* A save's every byte (saveByteMapHTML): a part a <details>, a record a
+   nested one, and the tag for a field whose meaning is not read. */
+.byteMapPart { margin:6px 0; }
+.byteMapPart > summary, .byteMapRec > summary { cursor:pointer; }
+.byteMapSize { color:#8c8980; font-size:0.6875rem; margin-left:6px; }
+.byteMapBody { margin-top:4px; }
+.byteMapTable td { vertical-align:top; overflow-wrap:anywhere; }
+.byteUnread { display:inline-block; margin-left:5px; padding:0 5px; border-radius:8px; font-size:0.625rem; color:#b5b2a8; border:1px solid #8c8980; }
+.forkTable td.num { text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace; white-space:nowrap; }
+.forkTable .navChip { margin:0; }
+.installerVersions { grid-column:1/-1; justify-content:flex-start; align-items:center; gap:6px; margin:2px 0 8px; }
+.installerVersions .amNote, .installerOpen .amNote { color:#fff; font-size:0.75rem; }
+.installerOpen { grid-column:1/-1; text-align:left; display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin:0 0 6px; }
+.installerOpen .propHead { grid-column:auto; margin:0; border:0; padding:0; }
+/* A sentence under a kind's heading in the fork galleries, in the running
+   text's face rather than the heading's small caps. */
+.kindNote { display:block; margin:4px 0 2px; font-size:0.75rem; line-height:1.4; color:#fff;
+  letter-spacing:0; text-transform:none; font-weight:400; }
+.kindNote .navChip { margin-left:6px; }
+.vocabTable { border-collapse:collapse; font-size:0.7812rem; margin:0 0 10px; }
+.vocabTable th { text-align:left; color:#fff; font-weight:600; padding:2px 10px 2px 0; vertical-align:top; white-space:nowrap; }
+.vocabTable td { padding:2px 0; vertical-align:top; }
+.barkTable td { padding:4px 10px 4px 0; border-bottom:1px solid rgba(155,136,80,.2); }
+.barkTable .inspDim { color:#b5b2a8; font-size:0.7188rem; }
+.forkTable td.icon { width:36px; padding:2px 4px; }
+.forkTable td.icon canvas { width:32px; height:32px; image-rendering:pixelated; display:block; }
+.installerOpen .installerOpenName { color:#fff; font-size:1.0625rem; font-weight:600; }
+.installerText { grid-column:1/-1; text-align:left; white-space:pre-wrap; word-break:break-word;
+  font:12px/1.45 ui-monospace,Menlo,Consolas,monospace; color:#d8d0b4; background:rgba(0,0,0,.35);
+  border:1px solid var(--edge); border-radius:6px; padding:10px 12px; margin:6px 0; max-height:70vh; overflow:auto; }
+.changesHead { color:#fff; font-size:0.9375rem; font-weight:600; margin:2px 0 8px; }
+/* The combat AI's words are identifiers a rule file is written in, so the
+   Rules tab sets them in the code face, not the game's. */
+.vocabTable td { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:0.75rem; letter-spacing:0; }
+.changesRow { display:flex; align-items:center; gap:10px; padding:3px 0; flex-wrap:wrap; }
+.changesRow .navChip { margin:0; }
+.changesGroup { margin-top:16px; padding-top:10px; border-top:1px solid rgba(155,136,80,.35); }
+.changesGroupTitle { color:#fff; font-size:0.7812rem; margin-bottom:2px; }
+.changesGroup button { display:block; width:auto; margin:6px 0 0; text-align:left; }
+.changesGroup button[disabled] { opacity:.45; cursor:default; text-decoration:none; }
+.changesNote { color:#fff; font-size:0.75rem; margin:0 0 2px 14px; }
+.changesWarn { color:#e8b66a; font-size:0.7812rem; margin-top:12px; }
+/* The joins. A row of chips under an entity naming the components it is made
+   of, and under a component naming what uses it (partsStrip). The chips are
+   relation chips (relChip): icon, name, kind, quiet id. */
+.partsStrip { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; margin:8px 0 4px; }
+/* Links folded shut under one line (linksFold): the line is a control, so
+   it is gold. */
+.linksFold { margin:8px 0 4px; }
+/* What a carried container holds, indented under it. */
+.relChip.carriedInside { margin-left:14px; opacity:.9; }
+.itemWhere { margin:4px 0; display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+.linksFold > summary { color:var(--gold); cursor:pointer; font-size:0.75rem; }
+.linksFold[open] > summary { margin-bottom:4px; }
+.partsTitle { color:#b5b2a8; font-size:0.6562rem; letter-spacing:0;
+  margin-right:6px; flex-basis:7.5em; }
+.relChip { display:inline-flex; align-items:center; gap:5px; width:auto; margin:0; min-height:0;
+  padding:0; border-radius:0; background:none; border:0;
+  color:var(--gold); font-family:var(--face); font-size:0.8125rem; line-height:1.3;
+  text-align:left; cursor:pointer; clip-path:none; box-shadow:none; text-shadow:none;
+  letter-spacing:0; font-weight:400; }
+.relChip::before, .relChip::after { display:none; }
+.relChip:hover, .relChip:focus-visible { background:none; color:var(--gold); }
+.relChip:hover .relMain { text-decoration:underline; }
+.relIcon { width:16px; height:16px; image-rendering:pixelated; flex:none; opacity:.92; }
+/* A portrait on a link: larger than a tile, since a face at 16px is a smudge. */
+.relIcon.relFace { width:22px; height:22px; image-rendering:auto; border-radius:3px; object-fit:cover; }
+.relChip:hover .relIcon { opacity:1; }
+/* The name, then its kind and hex on the same line, quiet. */
+.relText { display:inline-flex; flex-direction:row; align-items:baseline; gap:5px; min-width:0; }
+.relMain { color:inherit; }
+.relSub { color:var(--gold); opacity:.72; font-size:0.7em; }
+.relHex, .relNote { color:var(--gold); opacity:.72; font-size:0.7em; font-family:ui-monospace,Menlo,monospace; margin-left:1px; }
+.relNote { font-family:inherit; }
+.relChip:hover .relSub, .relChip:hover .relHex { opacity:1; }
+/* A chip in a table cell keeps to one line. Its name, kind, hex and note
+   are separate spans in a row that was free to wrap, and in a table on a
+   phone each wrapped to a word a line, so a column of chips pressed every
+   other column to a sliver (the maintainer, 22 September 2026: the
+   Dialogue tab's tables). On one line the table is as wide as it needs to
+   be, and .tableScroll scrolls it sideways with its fade. */
+td .relChip, td .relText, td .relMain, td .relSub, td .relNote { white-space:nowrap; }
+.partsNote { color:#fff; font-size:0.75rem; flex-basis:100%; line-height:1.4; }
+#mapParts { max-width:720px; margin:0 auto 6px; text-align:left; }
+#artUsage .partsStrip { margin:4px 0; }
+/* The pill an "Up to" and a view's own "All <this>" wear. The trail's
+   "Back to <the last page>" wore it too until 20 September 2026. */
+.crumbBtn { width:auto !important; margin:0 !important; min-height:0 !important;
+  padding:4px 12px !important; border-radius:14px !important; clip-path:none !important;
+  background:#1d1a15 !important; background-image:none !important;
+  border:1px solid var(--edge) !important; box-shadow:none !important;
+  color:var(--gold) !important; text-shadow:none !important; font-size:0.7812rem !important;
+  font-weight:400 !important; letter-spacing:0; font-family:var(--face); }
+.crumbBtn::before, .crumbBtn::after { display:none !important; }
+.crumbBtn:hover { color:var(--gold) !important; border-color:var(--gold) !important; filter:none; }
+.crumbNote { color:#8c8980; font-size:0.7188rem; }
+@media (max-width:520px) { .crumbNote { display:none; } }
+
+#propFilterWrap { margin:8px 0 2px; }
+.propHead { grid-column:1/-1; text-align:left; color:#b5b2a8; font-size:0.6875rem;
+  letter-spacing:0; margin:12px 0 2px;
+  border-bottom:1px solid var(--edge); padding-bottom:4px; }
+.cell.propCell { height:150px; justify-content:flex-start; }
+.cell.propCell .cellimgwrap { flex:0 0 78px; height:78px; }
+/* An item cell carries three facts (weight, count, id) where a prop cell
+   carries two, so the caption is given a smaller type size rather than a
+   third line. */
+.cell.itemCell .resid { font-size:0.625rem; line-height:1.35; }
+
+/* ---- Focus, keyboard and drop affordances -------------------------------
+   The plaque `button` rule above sets clip-path with !important, and a
+   clip-path clips the focus outline along with everything else -- so keyboard
+   focus was invisible on every button in the file. An INSET box-shadow is
+   drawn inside the clipped shape and survives it. */
+button:focus-visible {
+  box-shadow: inset 0 0 0 3px var(--gold), inset 0 2px 0 rgba(255,255,255,.42),
+              inset 0 -2px 0 rgba(0,0,0,.42) !important;
+  filter: brightness(1.12); }
+.cell:focus-visible, [tabindex]:focus-visible, a:focus-visible {
+  outline: 3px solid var(--gold); outline-offset: 2px; }
+input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--gold); outline-offset: 1px; }
+/* Reachable by keyboard, but only shown once it is focused. */
+.skipToGallery { position:absolute; left:-9999px; top:0; z-index:100; width:auto !important; color:var(--gold); }
+.skipToGallery:focus { left:8px; }
+
+body.dropping::after { content:'Drop the Cythera installer (.sit or .bin) or a Cythera Data file (.hqx) to open it';
+  position:fixed; inset:14px; z-index:60; pointer-events:none;
+  border:3px dashed var(--gold); border-radius:10px;
+  background:rgba(10,8,5,.55); color:var(--gold);
+  font-family:var(--face); font-size:1.375rem;
+  display:flex; align-items:center; justify-content:center; }
+
+/* The Tools sheet's log of what fell back: a folded grey line at the foot. */
+.quietLog { margin-top:22px; padding-top:8px; border-top:1px solid rgba(155,136,80,.25); font-size:0.7188rem; color:#8c8980; }
+.quietLog > summary { color:var(--gold); opacity:.55; }
+.quietLog > summary { cursor:pointer; list-style:none; }
+.quietLog > summary::-webkit-details-marker { display:none; }
+.quietLog > summary::before { content:''; display:inline-block; width:6px; height:6px; margin:0 6px 1px 0;
+  border-right:1.5px solid #8c8980; border-bottom:1.5px solid #8c8980; transform:rotate(-45deg); }
+.quietLog[open] > summary::before { transform:rotate(45deg); }
+.quietLog > summary:hover { opacity:1; }
+/* A label is a control (it focuses or toggles what it wraps), and a cell is
+   one; both wear gold throughout. */
+label { color:var(--gold); }
+.cell { color:var(--gold); }
+/* A text link that is a <button> because it does something rather than going
+   somewhere -- the plaque styling would be absurd at 11px. */
+button.linkbtn { all:unset; cursor:pointer; color:var(--gold); text-decoration:underline;
+  font-size:inherit; font-family:inherit; opacity:.8; }
+button.linkbtn:hover { opacity:1; }
+button.linkbtn:focus-visible { outline:2px solid var(--gold); outline-offset:2px; }
+
+
+/* What a click on the map found. */
+#mapInspect { max-width:720px; margin:8px auto 0; padding:10px 14px; text-align:left;
+  background:rgba(20,18,14,.92); border:1px solid var(--edge); border-radius:8px; font-size:0.8125rem; }
+
+/* On a wide screen the square's details stand BESIDE the map rather than
+   under it (the maintainer, 13 September 2026): reading what is on a square
+   meant scrolling away from the square itself, and the panel had the width
+   to spare all along.
+
+   Done entirely in the stylesheet, and that is deliberate. #mapStage carries
+   an inline max-width and #mapViewport an inline height, and a check watches
+   `display`, `height` and `padding` on mapPreview, mapStage, mapViewport,
+   mapInspect and markLegend across a visit to the World tab -- it exists to
+   catch the atlas leaving this panel disturbed. Writing these positions from
+   script would trip it for a reason that has nothing to do with the bug it
+   guards. A rule cannot.
+
+   Below 900px it stays one column, which is the phone's layout untouched:
+   62vh of map with a pane beside it would leave neither readable. */
+@media (min-width:900px) {
+  #mapPreview.hasInspect { display:grid; grid-template-columns:minmax(0,1fr) 320px;
+    grid-template-areas: 'label label' 'parts parts' 'stage inspect' 'zoom inspect'
+                         'chars inspect' 'legend inspect' 'save inspect';
+    gap:0 16px; align-items:start; }
+  #mapPreview.hasInspect > #mapLabel { grid-area:label; }
+  #mapPreview.hasInspect > #mapParts { grid-area:parts; }
+  #mapPreview.hasInspect > #mapStage { grid-area:stage; max-width:none; }
+  /* The zoom row carries the same inline 720px cap and auto margins the
+     stage does. Freeing the stage without freeing this left the map wide and
+     its own slider pinned narrow and centred beneath it. */
+  #mapPreview.hasInspect > .zoomrow { grid-area:zoom; max-width:none !important; margin-left:0 !important; margin-right:0 !important; }
+  #mapPreview.hasInspect > #markLegend { grid-area:legend; }
+  #mapPreview.hasInspect > #mapSaveRow { grid-area:save; }
+  #mapPreview.hasInspect > #charControls { grid-area:chars; }
+  /* The pane itself: its own scroll, so a square with a dozen records does
+     not stretch the row and push the map's controls down the page. */
+  #mapPreview.hasInspect > #mapInspect { grid-area:inspect; margin:0; max-width:none;
+    position:sticky; top:8px; max-height:calc(62vh + 44px); overflow-y:auto; }
+}
+#mapInspect .inspHead { color:#fff; font-weight:600; margin-bottom:8px;
+  display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+#mapInspect .inspClose { margin-left:auto; font-size:0.75rem; }
+#mapInspect .inspCard { border-top:1px solid rgba(155,136,80,.35); padding:8px 0; }
+/* A person's card carries their face, the portrait where there is one. */
+.inspCard.person { display:flex; gap:10px; align-items:flex-start; }
+.inspFace { width:48px; height:48px; flex:none; image-rendering:pixelated; border:1px solid var(--edge); border-radius:3px; }
+#atlasHover canvas.hvFace, #mapHover canvas.hvFace { width:44px; height:44px; border:1px solid var(--edge); border-radius:3px; }
+#mapInspect .inspDim { color:#b5b2a8; font-size:0.75rem; }
+#mapInspect .inspRows { display:grid; grid-template-columns:auto 1fr; gap:2px 12px; margin:6px 0 0; }
+#mapInspect .inspRows dt { color:#b5b2a8; }
+#mapInspect .inspRows dd { margin:0; font-family:ui-monospace,Menlo,Consolas,monospace; }
+#mapInspect .inspActs { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+/* The atlas's own panel. No frame of its own: the folder behind it is the
+   ground, and the map is the page. These rules were lost once already -- a
+   sweep that deleted the old full-bleed block ran from one comment to the
+   next and took them with it, which left the viewport zero pixels high and
+   the World tab showing nothing at all. */
+/* ---- Entities > Mechanics: the rules, sectioned --------------------------
+   A section per rule: a game tile where one fits, a title, chips to
+   the scripts it was read from, one line saying what it is, the rule as
+   short items, and the table under it. Numbers sit in stat pills. */
+.mechView { grid-column:1/-1; text-align:left; max-width:920px; margin:0 auto;
+  /* Auto margins on a grid item shrink it to its content, so every rules
+     column was as wide as its widest closed heading and no two tabs
+     matched; a card put above a gallery (Who answers as whom) was a box
+     the width of its title. */
+  width:100%; }
+.mechSec { margin:18px 0 0; padding:12px 12px 10px; background:rgba(20,18,14,.42); border:1px solid rgba(155,136,80,.35); border-radius:8px;
+  display:block; width:100%; box-sizing:border-box; min-width:0; }
+/* A card is a <details>; its head is the summary. The marker is a chevron
+   drawn with borders, since a triangle glyph is not in Argos and a browser
+   would set it in whatever face it finds. */
+details.mechSec > summary { cursor:pointer; list-style:none; }
+details.mechSec > summary::-webkit-details-marker { display:none; }
+details.mechSec > summary::before { content:''; width:7px; height:7px; flex:none; margin:0 2px 0 2px;
+  border-right:2px solid var(--gold); border-bottom:2px solid var(--gold); transform:rotate(-45deg); transition:transform .12s; }
+details.mechSec[open] > summary::before { transform:rotate(45deg); }
+details.mechSec > summary:hover h3 { color:var(--gold); }
+.skillIcon { width:32px; height:16px; image-rendering:pixelated; flex:none; }
+.skillIcon.skillIconTile { width:16px; height:16px; }
+.mechHead { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:0 0 4px; }
+.mechHead canvas { width:22px !important; height:22px !important; image-rendering:pixelated; flex:none; margin:0 !important; }
+.mechHead h3 { margin:0; font-size:1.0625rem; color:#fff; font-weight:600; letter-spacing:.01em; }
+/* A summary is a control: what it says is gold, like every other thing a
+   tap does something to (the maintainer, 20 September 2026: all linked text
+   yellow, all yellow text linked). The figures and the notes inside it wear
+   the same gold, dimmed. */
+summary, summary h3, summary.mechHead h3, summary b, summary .mechStat, summary .mechStat b, summary .foldTitle { color:var(--gold); }
+summary .foldGist, summary .mechStatNote { color:var(--gold); opacity:.72; }
+summary .mechStat { border-color:rgba(249,248,111,.35); }
+.mechFrom { display:inline-flex; gap:5px; flex-wrap:wrap; margin-left:auto; }
+.mechFrom .relChip { font-size:0.75rem; }
+.mechFrom { gap:4px 12px; }
+/* A folded card's links to its sources wait until it is opened (the
+   maintainer, 2 October 2026): shut, the summary is the name alone. */
+details:not([open]) > summary .mechFrom { display:none; }
+.mechLede { margin:2px 0 6px; color:#fff; font-size:0.8438rem; line-height:1.45; }
+.ruleList { margin:0 0 8px; padding-left:20px; color:#fff; font-size:0.8125rem; line-height:1.5; }
+.ruleList li { margin:2px 0; }
+.ruleList b { color:#fff; font-weight:600; }
+.mechStats { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; margin:4px 0 8px; }
+.mechStat { display:inline-block; padding:3px 10px; border:1px solid rgba(155,136,80,.45); border-radius:14px; background:#1a1712;
+  color:#fff; font-size:0.75rem; }
+.mechStat b { color:#fff; font-size:0.875rem; margin-right:4px; }
+.mechStatNote { color:#8c8980; font-size:0.7188rem; }
+.mechQuote { margin:6px 0 4px; padding:6px 12px; border-left:3px solid rgba(155,136,80,.5); color:#fff; font-size:0.7812rem; font-style:italic; line-height:1.45; }
+.mechQuote footer { font-style:normal; color:#8c8980; font-size:0.6875rem; margin-top:2px; }
+.mechSub { color:#b5b2a8; font-size:0.6875rem; letter-spacing:0; margin:8px 0 2px; }
+/* The patches section. The tile pairs are the point of it: a shipped tile and
+   the patch's beside it, at 2x so a 32-pixel tile is legible without a zoom
+   control, and wrapping so a phone gets three or four pairs to a row instead
+   of a strip that scrolls sideways. The pairs are what carries the meaning,
+   so they are the only thing here given any size. */
+.patchMono { font-family:ui-monospace, Menlo, Consolas, monospace; font-size:0.6875rem; letter-spacing:0; }
+.patchBad { color:#e6b96a; }
+.patchFacts td:first-child { color:#8c8980; white-space:nowrap; padding-right:14px; vertical-align:top; }
+.patchSheetHead { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin:10px 0 2px; }
+.patchSheetHead .mechSub { margin:0; }
+.patchStrip { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 6px; }
+.patchPair { position:relative; display:flex; gap:2px; padding:3px 3px 12px; border:1px solid rgba(155,136,80,.35);
+  border-radius:3px; background:#1a1712; }
+.patchTile { width:64px; height:64px; image-rendering:pixelated; display:block; }
+.patchTileNo { position:absolute; left:0; right:0; bottom:1px; text-align:center; color:#8c8980; font-size:0.625rem;
+  font-variant-numeric:tabular-nums; }
+/* A script's changes, line by line (scriptDiffSection). One fold a script,
+   shut until opened; the lines wrap rather than scroll, since a line of
+   dialogue is a paragraph and a phone is 390 px. The mark column holds the
+   minus or the plus; the words that differ are bold and underlined, since
+   the colours are white and the two greys and nothing else. */
+.sdScript { margin:2px 0; }
+.sdScript > summary { cursor:pointer; color:var(--gold); font-size:0.8125rem; padding:3px 0; }
+.sdCount { color:#8c8980; margin-left:8px; font-variant-numeric:tabular-nums; }
+.sdBody { margin:2px 0 10px 12px; }
+.sdHunk { margin:6px 0; padding:3px 0 3px 6px; border-left:2px solid rgba(155,136,80,.35); }
+.sdLine { display:flex; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:0.6875rem; line-height:1.45; }
+.sdMark { flex:0 0 1.3em; }
+.sdText { flex:1; min-width:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.sdSame { color:#8c8980; }
+.sdOld { color:#b5b2a8; }
+.sdNew { color:#fff; }
+.sdLine b { text-decoration:underline; }
+/* The sprite section. The page's button rule is !important on background,
+   border, padding and box-shadow, so a swatch coloured on the button itself
+   drew nothing at all (the maintainer's screenshot, 18 September 2026): the
+   colour is on an inner square the rule does not reach, the button's own
+   padding and height are taken back with the one selector that outranks
+   `#sheetGrid button`, and the chosen ring is an outline, which the rule
+   leaves alone. */
+.heroPicks { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:6px 0 8px; }
+#sheetGrid button.heroPick { display:flex; align-items:center; gap:6px; width:auto; margin:0; padding:4px 10px 4px 4px !important; }
+#sheetGrid button.heroPick.on { outline:2px solid var(--gold); outline-offset:-2px; }
+.heroParts { display:flex; flex-direction:column; gap:6px; margin:0 0 8px; }
+.heroPart { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; }
+.heroPartName { display:flex; align-items:center; gap:6px; color:#b5b2a8; font-size:0.6875rem; min-width:96px; }
+.heroSwatches { display:flex; flex-wrap:wrap; align-items:center; gap:2px; }
+#sheetGrid button.heroSwatch { width:auto; margin:0; padding:3px !important; min-height:0 !important; line-height:0 !important; }
+.heroChip { display:block; width:22px; height:22px; border-radius:3px; border:1px solid rgba(0,0,0,.6); box-sizing:border-box; }
+#sheetGrid button.heroSwatch.on { outline:2px solid var(--gold); outline-offset:-1px; }
+#sheetGrid button.heroShipped { padding:4px 8px !important; line-height:1.2 !important; font-size:0.6875rem !important; }
+.heroAny { width:32px; height:24px; margin:0 0 0 4px; padding:0; border:1px solid rgba(155,136,80,.35); border-radius:3px; background:#1a1712; cursor:pointer; }
+.heroDesc { width:100%; max-width:480px; box-sizing:border-box; margin:0 0 6px; }
+.gremlinForm { display:grid; grid-template-columns:max-content 1fr; gap:6px 10px; align-items:center; margin:6px 0 10px; max-width:640px; }
+.gremlinForm > span { font-size:0.8125rem; }
+.gremlinForm input.gremlinNum, #gremlinNum { width:5em; }
+.gremlinForm input.gremlinSay { width:100%; max-width:420px; box-sizing:border-box; }
+.gremlinListing { width:100%; max-width:640px; min-height:160px; box-sizing:border-box; font-family:ui-monospace, Menlo, monospace; font-size:0.8125rem; }
+.appFixRow { margin:4px 0; }
+.appFixRow > label { display:flex; gap:8px; align-items:flex-start; line-height:1.4; margin:0; }
+.appFixRow > label > input { flex:none; margin:2px 0 0; }
+.appFixWords { margin:2px 0 6px 22px; }
+.appFixWords > summary { color:var(--gold); cursor:pointer; font-size:0.75rem; }
+.appFixListing { font-family:ui-monospace, Menlo, monospace; font-size:0.75rem; white-space:pre; overflow-x:auto; max-width:100%; margin:4px 0; }
+.dataFixHead { margin:14px 0 4px; }
+.dataFixHead > label.partsTitle { display:flex; gap:8px; align-items:center; margin:0; font-size:0.8125rem; }
+.dataFixHead > label > input { flex:none; margin:0; }
+.dataFixOptions { margin:0 0 6px 22px; }
+.dataFixChanges { margin:6px 0 4px; }
+.dataFixChange { margin:3px 0; font-size:0.8125rem; line-height:1.4; overflow-wrap:anywhere; }
+.dataFixChange input[type=checkbox] { margin:0 6px 0 0; vertical-align:middle; }
+.dataFixChoice { margin:8px 0; }
+.dataFixChoice label { display:inline-block; margin:2px 14px 2px 0; }
+.dataFixChoiceName { color:#b5b2a8; font-size:0.8125rem; }
+.dataFixAll, .dataFixGroupBox { vertical-align:middle; }
+.dataFixPlace { margin-right:6px; }
+.dataFixMany { display:inline-block; margin-left:6px; vertical-align:top; }
+.dataFixMany > summary { color:var(--gold); cursor:pointer; }
+.dataFixWas { color:#b5b2a8; text-decoration:line-through; margin-right:8px; }
+.dataFixNow { color:#fff; }
+@media (max-width:560px) { .gremlinForm { grid-template-columns:1fr; } }
+.heroSelect { width:auto; max-width:100%; margin:0; padding:4px 6px; }
+.heroThumb { width:48px; height:48px; image-rendering:pixelated; display:block; border:1px solid rgba(155,136,80,.35); border-radius:3px; background:#1a1712; }
+.mechTable { width:100%; }
+.mechTable th { border-bottom:1px solid rgba(155,136,80,.45); padding-bottom:4px; }
+.mechTable th.num, .mechTable td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; padding-right:10px; }
+.mechTable tbody tr:nth-child(even) td { background:rgba(255,248,220,.025); }
+.mechTable td { padding:4px 10px 4px 0; }
+/* Columns need an edge of their own. Every rule above draws only HORIZONTAL
+   lines -- a border-bottom on the head and on each bark row -- and the zebra
+   striping carries the eye sideways, so a wide row read as one run of words
+   with no telling which column a cell belonged to (the maintainer, 13
+   September 2026: "tables need vertical dividers").
+
+   On the cells rather than the columns, because border-collapse is already
+   on and a <col> border does not survive it in every engine. Left edges
+   only, skipping the first cell, so the table gains internal rules without a
+   box drawn round the outside of it -- the panel already provides that, and
+   two borders a pixel apart read as a mistake. Lighter than the horizontal
+   rules on purpose: these are there to be followed down, not noticed. */
+.mechTable th + th, .mechTable td + td,
+.vocabTable th + th, .vocabTable td + td { border-left:1px solid rgba(155,136,80,.18); padding-left:10px; }
+.mechPrice { color:#fff; font-variant-numeric:tabular-nums; }
+.mechSec .partsStrip { margin-top:6px; }
+@media (max-width:640px) { .mechSec { padding:10px 8px 8px; } .mechHead h3 { font-size:0.9688rem; } .mechFrom { margin-left:0; } }
+/* Tables on a phone. Every table on these sheets sits in a .tableScroll, so a
+   wide one slid sideways and a reader had to scroll a row at a time to see
+   what a number belonged to (the maintainer, 13 September 2026). Three things
+   fix that without a second table implementation: a header may wrap rather
+   than forcing the table wider than the screen, the right-hand padding that
+   was sized for a desktop comes off, and a cell may break a word too long
+   for its line. The columns still line up; they are just allowed to be
+   narrow, down to their longest word. */
+@media (max-width:640px) {
+  .mechTable, .vocabTable { font-size:0.7188rem; }
+  .mechTable th, .vocabTable th { white-space:normal; padding-right:6px; }
+  /* break-word, not anywhere: "anywhere" also lets the table size a column
+     to a single character, and on a phone the prose column of every table
+     came out a letter a line (the maintainer, 22 September 2026). The tables
+     sit in .tableScroll, which scrolls sideways when the words need it. */
+  .mechTable td, .vocabTable td { padding:4px 6px 4px 0; overflow-wrap:break-word; }
+  /* A note column is prose: held to the screen's width it came out a word a
+     line beside a column of chips. It keeps room for a few words, and the
+     table scrolls sideways past the screen when that is wider. */
+  .mechTable td.mechSub { min-width:10em; }
+  /* The divider's own left padding has to come down with the rest. The base
+     rule sets 10px to clear the border, and a media query adds no
+     specificity, so without this a phone cell had 10px on the left against
+     6px on the right and every column sat visibly off-centre. */
+  .mechTable th + th, .mechTable td + td,
+  .vocabTable th + th, .vocabTable td + td { padding-left:6px; }
+  .mechTable th.num, .mechTable td.num { padding-right:6px; }
+  .tableScroll { -webkit-overflow-scrolling:touch; }
+  /* A sheet's table as cards (tableCardsLabel in js/page-galleries.js
+     labels the cells): a row is a card, its first cell the title, every
+     other cell a line of heading and value. Nothing is past the screen's
+     edge, so the wrapper neither scrolls nor fades. */
+  .tableScroll.cardsWrap { overflow-x:visible; box-shadow:none; }
+  table.asCards, table.asCards tbody, table.asCards tr { display:block; width:auto; min-width:0; }
+  table.asCards thead { display:none; }
+  table.asCards { font-size:0.75rem; }
+  table.asCards tr { margin:0 0 8px; padding:6px 10px 4px; border:1px solid rgba(155,136,80,.32); border-radius:8px; background:rgba(0,0,0,.16); }
+  table.asCards td, table.asCards td.num, table.asCards td.mechSub, table.asCards td + td {
+    display:grid; grid-template-columns:30% minmax(0, 1fr); column-gap:10px; padding:3px 0;
+    border:none; background:none; text-align:left; white-space:normal; min-width:0; }
+  table.asCards .cardVal, table.asCards .cardVal * { text-align:left; }
+  table.asCards tbody tr:nth-child(even) td { background:none; }
+  /* The heading in the left third and the value, one .cardVal, beside it. */
+  table.asCards td::before { content:attr(data-label); color:#b5b2a8; font-size:0.6875rem; line-height:1.5; overflow-wrap:break-word; }
+  table.asCards td:first-child { display:block; padding:0 0 5px; margin:0 0 3px; border-bottom:1px solid rgba(155,136,80,.22); font-weight:600; }
+  table.asCards td:first-child::before, table.asCards td.cardWide::before { content:none; }
+  table.asCards td.cardWide { display:block; }
+  /* A title that is a figure says what it counts: "byte 0", not "0". */
+  table.asCards td.num:first-child::before { content:attr(data-label) " "; }
+  table.asCards td:empty, table.asCards td.cardEmpty { display:none; }
+  table.asCards td .relChip, table.asCards td .relText, table.asCards td .relMain,
+  table.asCards td .relSub, table.asCards td .relNote { white-space:normal; }
+}
+/* ---- the figures on the Mechanics sheet ----------------------------------
+   Charts here are HTML and CSS, not SVG with text in it, and that is a
+   decision rather than a habit. An SVG scaled to the column's width scales
+   its type with it: legible on a phone means enormous on a desktop, and the
+   other way round. Bars, stacks, cell grids and number lines are laid out
+   with percentages instead, so every word on them is ordinary page text at
+   the page's own size and reflows like the rest. The one thing HTML cannot
+   draw is a curve, so `mechPlot` keeps an SVG for the line alone -- plotted
+   in a 0..100 box with preserveAspectRatio="none", which stretches the data
+   to fit exactly as intended, with vector-effect="non-scaling-stroke" so the
+   stroke does not stretch with it -- and puts the axis labels, the dots and
+   the annotations around it as HTML. */
+.mechFig { margin:10px 0 4px; }
+.mechFig figcaption { color:#8c8980; font-size:0.7188rem; line-height:1.45; margin-top:6px; }
+.mechFig figcaption b { color:#b5b2a8; font-weight:600; }
+.mechFigTitle { color:#b5b2a8; font-size:0.6562rem; letter-spacing:0; margin:0 0 5px; }
+.mechBars { display:grid; grid-template-columns:auto 1fr auto; gap:3px 8px; align-items:center; font-size:0.75rem; }
+.mechBars .bLabel { color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:44vw; }
+.mechBars .bTrack { background:rgba(255,248,220,.05); border-radius:2px; height:11px; position:relative; overflow:hidden; }
+.mechBars .bFill { position:absolute; top:0; bottom:0; border-radius:2px; }
+.mechBars .bVal { color:#fff; font-variant-numeric:tabular-nums; font-size:0.7188rem; white-space:nowrap; }
+.mechStack { display:flex; height:18px; border-radius:3px; overflow:hidden; border:1px solid rgba(155,136,80,.35); }
+.mechStack i { display:block; height:100%; }
+.mechKeys { display:flex; flex-wrap:wrap; gap:3px 12px; margin-top:5px; font-size:0.7188rem; color:#b5b2a8; align-items:center; }
+.mechKeys i { width:9px; height:9px; border-radius:2px; display:inline-block; margin-right:5px; vertical-align:-1px; }
+.mechKeys b { color:#fff; font-weight:600; font-variant-numeric:tabular-nums; }
+/* The columns stretch to the row's height: a flex item sized by its content
+   is one pixel tall, and a percentage height inside it then resolves to
+   nothing -- which is exactly how the first version of this drew an empty
+   box with the dashed sample rules lying on the floor. */
+.mechCols { display:flex; align-items:stretch; gap:3px; }
+.mechCols .cCol { flex:1; height:100%; position:relative; display:flex; flex-direction:column; justify-content:flex-end; }
+.mechCols .cFill { display:block; width:100%; border-radius:2px 2px 0 0; min-height:1px; }
+.mechCols .cMark { position:absolute; left:-1px; right:-1px; height:0; border-top:2px dashed var(--gold); }
+.mechColLabels { display:flex; gap:3px; margin-top:4px; }
+.mechColLabels span { flex:1; text-align:center; font-size:0.6562rem; color:#b5b2a8; }
+.mechPlot { display:grid; grid-template-columns:auto 1fr; align-items:stretch; }
+.mechPlot .pY { grid-area:1/1; position:relative; width:38px; }
+.mechPlot .pY span { position:absolute; right:5px; transform:translateY(-50%); font-size:0.625rem; color:#8c8980; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mechPlot .pArea { grid-area:1/2; position:relative; border-left:1px solid rgba(155,136,80,.45); border-bottom:1px solid rgba(155,136,80,.45); }
+.mechPlot .pArea svg { position:absolute; inset:0; width:100%; height:100%; display:block; }
+.mechPlot .pX { grid-area:2/2; position:relative; height:15px; margin-top:3px; }
+.mechPlot .pX span { position:absolute; transform:translateX(-50%); font-size:0.625rem; color:#8c8980; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mechPlot .pMark { position:absolute; transform:translate(-50%,-50%); font-size:0.6562rem; color:#fff; white-space:nowrap; pointer-events:none; }
+.mechPlot .pMark.right { transform:translate(-100%,-50%); }
+.mechPlot .pMark.left { transform:translate(0,-50%); }
+.mechPlot .pMark b { font-weight:600; text-shadow:0 0 4px #14120e, 0 0 4px #14120e; }
+.mechPlot .pDot { display:block; width:7px; height:7px; border-radius:50%; margin:0 auto; }
+.mechPlot .pAxisName { grid-area:2/1; font-size:0.625rem; color:#8c8980; text-align:right; padding-right:5px; }
+.mechDice { display:grid; grid-template-columns:auto repeat(6,1fr); gap:3px 6px; font-size:0.625rem; color:#b5b2a8; align-items:center; }
+.mechDice .dHead { text-align:center; color:#8c8980; }
+.mechDice .dSide { text-align:right; padding-right:3px; color:#8c8980; }
+.mechDice .dCell { display:flex; gap:1px; height:16px; padding:1px; background:rgba(0,0,0,.35); border-radius:2px; }
+.mechDice .dCell i { flex:1; border-radius:1px; }
+.mechDice .dHead svg, .mechDice .dSide svg { display:block; margin:0 auto; }
+.mechLine { position:relative; height:34px; margin:2px 0 4px; }
+.mechLine .lRule { position:absolute; left:0; right:0; top:16px; height:1px; background:rgba(155,136,80,.45); }
+.mechLine .lBand { position:absolute; top:11px; height:11px; border-radius:2px; opacity:.55; }
+.mechLine .lTick { position:absolute; top:9px; width:1px; height:15px; background:rgba(155,136,80,.6); }
+.mechLine .lLab { position:absolute; transform:translateX(-50%); font-size:0.625rem; color:#b5b2a8; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.mechLine .lLab.below { top:20px; }
+.mechLine .lLab.above { top:0; color:#fff; }
+.mechCtl { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; margin:6px 0 8px; font-size:0.75rem; color:#b5b2a8; }
+.mechCtl label { display:inline-flex; align-items:center; gap:5px; }
+.mechCtl input[type=range] { width:104px; accent-color:#9b8850; }
+.mechCtl select { font-size:0.75rem; padding:2px 4px; max-width:46vw; }
+/* The base stylesheet gives every button width:100% and a bottom margin --
+   the page was sized for a phone, where a button is a row. A control strip
+   has to opt out of both, as the toolbars and the atlas rows do. */
+.mechCtl button { width:auto; margin:0; padding:4px 11px !important; min-height:30px !important; font-size:0.75rem !important; }
+.mechCtl b { color:var(--gold); font-variant-numeric:tabular-nums; min-width:2ch; display:inline-block; }
+/* The dice are drawn rather than typed. U+2680..2685 are the obvious way to
+   put a die on a page and they are not in Argos, so on the maintainer's own
+   font they came out as six empty boxes; a browser that has to substitute a
+   font for them picks a different one on every platform. Seven circles is
+   less code than deciding which fallback stack to trust. */
+.mechDiceFaces { display:flex; gap:10px; align-items:center; margin:2px 0 4px; }
+.mechVerdict { font-size:0.7812rem; color:#fff; margin-top:2px; }
+.mechVerdict b { color:#fff; }
+.mechBalloon { display:block; margin:4px 0 0; }
+@media (max-width:640px) { .mechBars .bLabel { max-width:38vw; } .mechPlot .pY { width:32px; } }
+.askCard { margin-top:0; }
+.askAnswer .sv-note { margin-top:8px; }
+.skillCard .skillKey { color:#b5b2a8; font-size:0.6875rem; letter-spacing:0; white-space:nowrap; width:1%; padding-right:14px; vertical-align:top; }
+.lessonList { color:#fff; font-style:italic; }
+#atlasPanel { margin:0; background:#000; }
+/* The gate: one screen before anything is downloaded. */
+#landingGate { position:fixed; inset:0; z-index:200; background:rgba(8,7,5,.92); display:flex; align-items:center; justify-content:center; padding:20px; }
+.gateCard { max-width:520px; background:#1a1712; border:1px solid var(--edge); border-radius:12px; padding:22px 24px; color:#fff; line-height:1.45; box-shadow:0 8px 30px rgba(0,0,0,.6); text-align:center; }
+.gateCard .gateSpoiler { font-weight:600; color:#fff; }
+.gateCard h2 { margin:0 0 10px; color:#fff; font-size:1.625rem; font-weight:600; }
+.gateCard p { margin:8px 0; font-size:0.9375rem; }
+.gateCard .gateHint { color:#fff; font-size:0.8438rem; border-top:1px solid rgba(155,136,80,.35); padding-top:8px; margin-top:12px; }
+.gateRow { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; justify-content:center; }
+.gateRow button { width:auto; margin:0; padding:10px 16px; }
+/* The World tab sits on the same card as every other tab since 10 September
+   2026 (it was black to the folder's edges); the viewport itself is black,
+   which the sea colour and the fall into a hole paint over. */
+/* Full screen: the real thing where the browser allows it, and the panel
+   pinned over the page where it does not (see atlasToggleFull). */
+#atlasPanel:fullscreen, #atlasPanel:-webkit-full-screen, body.atlasFull #atlasPanel {
+  position:fixed; inset:0; z-index:60; margin:0; padding:0 4px; background:#0f0d09;
+  display:flex !important; flex-direction:column; overflow:hidden; }
+/* !important on the display, because renderAtlasView sets display:block
+   inline to show the panel, and inline beats the sheet: without it the
+   column never formed, the viewport's auto height was nothing, and full
+   screen was a zoom row and an inspector with no map between them. The
+   viewport also keeps a floor of half the screen, so a browser that gives
+   the column less than the screen still shows a map. */
+#atlasPanel:fullscreen #atlasViewport, #atlasPanel:-webkit-full-screen #atlasViewport,
+body.atlasFull #atlasPanel #atlasViewport { flex:1 1 auto; height:auto !important; min-height:50vh; }
+body.atlasFull { overflow:hidden; }
+/* In full screen the map is the whole thing: the zoom row, the inspector,
+   the strip and the tuning rows go, and one small overlay in the corner
+   says where you are and is the way out (and, below ground, the way up). */
+#atlasPanel:fullscreen #atlasZoomRow, #atlasPanel:-webkit-full-screen #atlasZoomRow, body.atlasFull #atlasPanel #atlasZoomRow,
+#atlasPanel:fullscreen #atlasTimeRow, #atlasPanel:-webkit-full-screen #atlasTimeRow, body.atlasFull #atlasPanel #atlasTimeRow,
+#atlasPanel:fullscreen #atlasInspect, #atlasPanel:-webkit-full-screen #atlasInspect, body.atlasFull #atlasPanel #atlasInspect,
+#atlasPanel:fullscreen #atlasBar, #atlasPanel:-webkit-full-screen #atlasBar, body.atlasFull #atlasPanel #atlasBar { display:none !important; }
+#atlasPanel:fullscreen, #atlasPanel:-webkit-full-screen, body.atlasFull #atlasPanel { padding:0; }
+/* !important over the inline height atlasSizeViewport sets out of full screen. */
+#atlasPanel:fullscreen #atlasViewport, #atlasPanel:-webkit-full-screen #atlasViewport, body.atlasFull #atlasPanel #atlasViewport { height:100% !important; min-height:100%; }
+#atlasFullOverlay { position:absolute; top:10px; left:10px; z-index:61; align-items:center; gap:8px;
+  padding:6px 8px 6px 12px; background:rgba(8,7,5,.74); border:1px solid rgba(155,136,80,.5); border-radius:9px;
+  color:#fff; font-size:0.875rem; font-family:var(--face); pointer-events:auto; }
+#atlasFullOverlay .secondary { font-size:0.75rem; }
+#atlasViewport { position:relative; width:100%; height:78vh; overflow:hidden;
+  touch-action:none; cursor:grab; background:#000;
+  -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+#atlasViewport canvas, #mapViewport canvas { -webkit-user-drag:none; }
+/* Black laid over the map during the fall into a hole and the rise out of
+   one: the middle pixel of a hole is not always black, so the zoom does not
+   end on black by itself. Opacity follows the animation. */
+#atlasFade { position:absolute; inset:0; background:#000; opacity:0; pointer-events:none; z-index:5; }
+#mapViewport { -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+/* The row under the map sat straight on the planks and its two buttons ran
+   off the right of a phone: it wraps now, and has the bar's own dark ground. */
+#atlasZoomRow, #atlasTimeRow { flex-wrap:wrap; row-gap:6px; margin:6px 0 0; padding:6px 10px;
+  background:rgba(20,18,14,.92); border:1px solid var(--edge); border-radius:8px; color:#fff; }
+#atlasZoomRow input[type=range], #atlasTimeRow input[type=range] { flex:1 1 120px; min-width:90px; }
+#atlasZoomLabel, #atlasHourLabel { color:#fff; font-variant-numeric:tabular-nums; }
+#atlasHourLabel { min-width:64px; text-align:right; }
+#atlasTimeRow label { display:flex; align-items:center; gap:5px; cursor:pointer; min-height:30px;
+  padding:2px 9px; border:1px solid rgba(155,136,80,.35); border-radius:15px; white-space:nowrap; }
+#atlasTimeRow label:has(input[type=checkbox]:checked) { background:rgba(196,164,100,.2); border-color:#c4a464; color:#fff; }
+#atlasZoomRow button { flex:0 0 auto; }
+#atlasViewport canvas { display:block; }
+#atlasBar { padding:7px 12px; margin:0 0 6px; text-align:left;
+  background:rgba(20,18,14,.92); border:1px solid var(--edge); border-radius:8px;
+  font-size:0.8125rem; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+#atlasBar .wbWhere { color:#fff; font-weight:600; }
+#atlasBar .wbNote { color:#b5b2a8; font-size:0.75rem; }
+/* Over the map, placed by atlasPlaceInspect: a column at the right on a
+   wide screen, the lower part of the map on a narrow one. Hidden until a
+   square is picked; the text it holds then is what the smoke reads. */
+#atlasPanel { position:relative; }
+#atlasInspect { position:absolute; right:8px; z-index:8; width:min(360px, calc(100% - 16px)); overflow:auto;
+  padding:10px 14px; text-align:left; box-sizing:border-box;
+  background:rgba(20,18,14,.94); border:1px solid var(--edge); border-radius:8px; font-size:0.8125rem;
+  box-shadow:0 4px 18px rgba(0,0,0,.5); }
+#atlasInspect:not(.inspOpen) { display:none !important; }
+#atlasInspect .inspClose { float:right; width:auto !important; margin:-4px -6px 4px 8px !important; padding:2px 10px !important; min-height:0 !important; }
+@media (max-width:699px) { #atlasInspect { left:8px; width:auto; } }
+#atlasInspect .inspHead { color:#fff; font-weight:600; margin-bottom:8px; }
+#atlasInspect .inspCard { border-top:1px solid rgba(155,136,80,.35); padding:6px 0; }
+#atlasInspect .inspDim { color:#b5b2a8; font-size:0.75rem; }
+#atlasInspect .inspActs { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+#atlasHover { position:absolute; z-index:7; pointer-events:none; display:none;
+  background:rgba(12,10,7,.94); border:1px solid rgba(196,164,100,.7); border-radius:6px;
+  padding:5px 9px 5px 5px; box-shadow:0 2px 8px rgba(0,0,0,.55);
+  font-family:var(--face); font-size:0.75rem; color:#fff;
+  white-space:normal; overflow-wrap:anywhere;
+  align-items:center; gap:7px; max-width:min(260px, calc(100vw - 24px)); }
+#atlasHover canvas { image-rendering:pixelated; width:32px; height:32px; flex:none;
+  background:rgba(0,0,0,.35); border-radius:3px; order:-1; }
+/* A card put up by a TAP can be tapped back: it holds links now (the things
+   an egg names), and a card that ignores the pointer sends every one of them
+   to the map behind it. A card following a pointer stays transparent, because
+   it sits under the pointer by definition and would eat the very movement
+   that is driving it. `pointer-events` is the whole of the difference; the
+   guard against the tap also reaching the gesture handlers is in JS, since
+   both cards are children of their viewport. */
+#atlasHover.hvPinned, #mapHover.hvPinned { pointer-events:auto; }
+#atlasHover.hvPinned .svLink, #mapHover.hvPinned .svLink { cursor:pointer; }
+#atlasHover .hvName { color:#fff; font-weight:600; display:block; }
+#atlasHover .hvWhat { color:#b5b2a8; font-size:0.6875rem; display:block; }
+#atlasHover .hvWhere, #mapHover .hvWhere { color:#8c8980; font-size:0.6562rem; display:block; margin-top:2px; }
+/* Who that is, under the pointer. */
+#mapHover { position:absolute; z-index:7; pointer-events:none; display:none;
+  background:rgba(12,10,7,.94); border:1px solid rgba(196,164,100,.7); border-radius:6px;
+  padding:5px 9px 5px 5px; box-shadow:0 2px 8px rgba(0,0,0,.55);
+  font-family:var(--face); font-size:0.75rem; color:#fff;
+  white-space:normal; overflow-wrap:anywhere;
+  display:flex; align-items:center; gap:7px; max-width:min(260px, calc(100vw - 24px)); }
+#mapHover canvas { image-rendering:pixelated; width:32px; height:32px; flex:none;
+  background:rgba(0,0,0,.35); border-radius:3px; order:-1; }
+#mapHover .hvName { color:#fff; font-weight:600; display:block; }
+#mapHover .hvWhat { color:#b5b2a8; font-size:0.6875rem; display:block; }
+
+/* An opened container, the way the game shows one: the zoomrect graphic for
+   that kind of container with what is inside laid out on it. */
+.zoomRect { position:relative; margin:8px 0 4px; border-radius:6px;
+  background-repeat:no-repeat; background-size:100% 100%; background-position:center;
+  image-rendering:pixelated; min-height:120px;
+  padding:15% 13%; }
+.zoomRect .zrItems { position:relative; display:flex; flex-wrap:wrap; gap:6px;
+  justify-content:center; align-items:center; min-height:48px; }
+.zoomRect .zrItem { display:flex; align-items:center; gap:6px; width:auto; margin:0;
+  min-height:0 !important; padding:3px 11px 3px 4px !important; border-radius:18px !important;
+  clip-path:none !important;
+  background:rgba(12,10,7,.88) !important; background-image:none !important;
+  border:1px solid rgba(196,164,100,.7) !important; box-shadow:0 1px 3px rgba(0,0,0,.5) !important;
+  color:#fff !important; text-shadow:none !important; font-size:0.75rem !important;
+  font-weight:400 !important; letter-spacing:0; font-family:var(--face); }
+.zoomRect .zrItem:hover { border-color:var(--gold) !important; color:var(--gold) !important; filter:none; }
+.zoomRect .zrItem::before, .zoomRect .zrItem::after { display:none !important; }
+.zoomRect .zrCap { margin:4px 0 0; font-size:0.6875rem; color:#b5b2a8; text-align:center; }
+
+#artUsage { max-width:720px; margin:10px auto 0; padding:10px 14px; text-align:left;
+  background:rgba(20,18,14,.92); border:1px solid var(--edge); border-radius:8px; font-size:0.8125rem; }
+#artUsage .inspRows { display:grid; grid-template-columns:auto 1fr; gap:6px 12px; margin:0; }
+#artUsage .inspRows dt { color:#b5b2a8; }
+#artUsage .inspRows dd { margin:0; display:flex; gap:5px; flex-wrap:wrap; align-items:baseline; }
+#artUsage .inspDim { color:#b5b2a8; }
+#artUsage button.secondary { width:auto; margin:0; }
+
+/* Bulk export lives with the gallery, not with a single resource. */
+#galleryTools { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center;
+  justify-content:center; margin:10px 0 0; }
+#galleryTools button { width:auto; margin:0; }
+#exportNote { font-size:0.75rem; color:#b5b2a8; }
+#galleryArrange { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:0.7812rem; }
+#gallerySortWrap { display:flex; align-items:center; gap:6px; color:var(--gold); }
+#gallerySortSel, #sheetShapeSel { width:auto; margin:0; min-height:32px !important;
+  padding:3px 30px 3px 10px !important; font-size:0.7812rem !important; }
+
+#sheetGrid .listMeta { display:none; }
+
+/* ---- Map controls ------------------------------------------------------
+   Fourteen loose checkboxes in one wrapping row read as a wall of words, and
+   which of them changed the picture and which changed the overlay was not
+   visible at all. Three labelled groups -- what is drawn, what is marked on
+   top, and time -- with the notes on their own line underneath. */
+#charControls { margin-top:12px; display:flex; flex-direction:column; gap:6px;
+  align-items:stretch; max-width:720px; margin-left:auto; margin-right:auto; }
+.mapToggleGroup { display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center;
+  justify-content:flex-start; padding:7px 12px; font-size:0.8438rem;
+  background:rgba(20,18,14,.72); border:1px solid rgba(155,136,80,.45); border-radius:7px; }
+.mapToggleGroup .mtgLabel { flex:0 0 46px; font-size:0.6562rem; letter-spacing:1.4px;
+  color:#b5b2a8; }
+.mapToggleGroup label { display:flex; align-items:center; gap:5px; cursor:pointer;
+  white-space:nowrap; }
+/* Each switch a pill that lights when it is on, so what is showing reads at
+   a glance and a finger has more than a checkbox to hit. */
+.mapToggleGroup label:has(input[type=checkbox]) { min-height:30px; padding:2px 9px; border:1px solid rgba(155,136,80,.35); border-radius:15px; }
+.mapToggleGroup label:has(input[type=checkbox]:checked) { background:rgba(196,164,100,.2); border-color:#c4a464; color:#fff; }
+/* ---- the Cheats sheet -----------------------------------------------------
+   Two-column tables of key and effect, so the key caps line up down the left
+   and the prose wraps under its own heading rather than beside it. */
+.cheatH { margin:2px 0 6px; font-size:1rem; }
+.cheatH4 { margin:0 0 8px; font-size:0.75rem; letter-spacing:0; color:#b5b2a8; }
+.cheatNote { font-size:0.7188rem; color:#8c8980; line-height:1.55; margin:6px 2px; }
+.cheatNote b { color:#b5b2a8; }
+/* The Preferences tab: one row per setting, in groups, each row the game's
+   own label, where the game itself sets it, a line saying what it does, and
+   its control at the right. It was one paragraph and two rows of controls
+   wrapping into each other (the maintainer, 1 October 2026: "messy"). A
+   switch is the checkbox hidden behind a drawn track whose knob turns gold
+   when on, and the whole row is its label, so a tap anywhere on a phone
+   toggles it; a chooser keeps the page's own select. */
+/* #appShell div caps every div at 100%, which outranks a bare class. */
+#appShell .prefSheet { max-width:820px; margin:0 auto; }
+.prefLede { color:#fff; font-size:0.8438rem; line-height:1.5; margin:4px 0 2px; }
+.prefFrom { color:#8c8980; font-size:0.7188rem; line-height:1.5; margin:2px 0 6px; }
+.prefGroup { margin:16px 0 0; }
+.prefGroup h3 { margin:0 0 6px 2px; font-size:1.0625rem; color:#fff; font-weight:600; }
+.prefRows { border:1px solid rgba(155,136,80,.4); border-radius:10px; background:rgba(20,17,12,.5); overflow:hidden; }
+.prefRow { display:flex; align-items:center; flex-wrap:wrap; gap:8px 18px; padding:11px 14px; border-top:1px solid rgba(155,136,80,.22); }
+.prefRow:first-child { border-top:0; }
+label.prefRow { cursor:pointer; flex-wrap:nowrap; }
+label.prefRow .prefText { flex:1 1 0; }
+label.prefRow:hover { background:rgba(155,136,80,.08); }
+.prefText { flex:1 1 240px; min-width:0; display:block; }
+.prefName { color:#fff; font-size:0.9375rem; }
+.prefWhere { display:inline-block; margin-left:8px; padding:1px 8px; border:1px solid rgba(155,136,80,.45); border-radius:10px;
+  color:#b5b2a8; font-size:0.6562rem; vertical-align:2px; white-space:nowrap; }
+.prefDesc { display:block; color:#b5b2a8; font-size:0.7812rem; line-height:1.45; margin-top:3px; }
+.prefCtl { flex:none; margin-left:auto; position:relative; display:flex; align-items:center; }
+.prefCtl select { width:auto; min-width:12em; margin:0; font-size:0.9375rem; }
+.prefRow .prefCtl input[type=checkbox] { position:absolute; opacity:0; width:1px; height:1px; margin:0; min-height:0; }
+.prefSwitch { display:block; width:44px; height:24px; border-radius:12px; background:#15120d; border:1px solid var(--edge);
+  position:relative; box-shadow:inset 0 1px 3px rgba(0,0,0,.6); transition:background .15s, border-color .15s; }
+.prefSwitch::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%;
+  background:#8c8980; transition:transform .15s, background .15s; }
+.prefCtl input:checked + .prefSwitch { background:rgba(196,164,100,.32); border-color:#c4a464; }
+.prefCtl input:checked + .prefSwitch::after { transform:translateX(20px); background:var(--gold); }
+.prefCtl input:focus-visible + .prefSwitch { outline:2px solid var(--gold); outline-offset:2px; }
+label.prefRow:hover .prefSwitch { border-color:var(--gold); }
+.prefPresets { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; margin:10px 0 0; }
+.prefPresets button { width:auto !important; margin:0 !important; }
+.prefPresetNote { color:#8c8980; font-size:0.7188rem; line-height:1.45; flex:1 1 220px; }
+.prefSave { display:flex; gap:10px; flex-wrap:wrap; padding:12px 14px; }
+.prefSave button { width:auto !important; margin:0 !important; }
+.prefSaveNote { color:#b5b2a8; font-size:0.7812rem; line-height:1.45; padding:0 14px 12px; }
+@media (max-width:640px) {
+  .prefRow { padding:10px 12px; }
+  .prefCtl:has(select) { flex:1 1 100%; }
+  .prefCtl select { width:100%; }
+}
+.cheatTable { min-width:0; }
+.cheatTable td { vertical-align:top; }
+.cheatCombo { width:150px; white-space:normal; }
+.cheatKey { display:inline-block; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.7188rem;
+  padding:2px 6px; border:1px solid rgba(155,136,80,.55); border-bottom-width:2px; border-radius:4px;
+  background:rgba(20,18,14,.7); color:#fff; }
+.cheatGlyph { color:#fff; font-size:0.875rem; margin-left:4px; }
+.cheatCode { display:block; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.6562rem; color:#7f7760; margin-top:3px; }
+.cheatDoes { font-size:0.75rem; color:#b5b2a8; line-height:1.5; margin-top:2px; }
+.cheatSprites { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.cheatSprite { font-size:0.7188rem; color:#b5b2a8; background:rgba(20,18,14,.55);
+  border:1px solid rgba(155,136,80,.3); border-radius:4px; padding:2px 7px; }
+.cheatSprite b { color:#fff; font-family:ui-monospace,Menlo,Consolas,monospace; }
+.cheatSprite.isMonster { border-color:rgba(190,120,90,.4); }
+.cheatSprite.isMonster b { color:#e0b48c; }
+/* ---- the saved-game sheet -------------------------------------------------
+   The head is a portrait beside a sentence, the rest is the fork table's own
+   look, so this adds five rules rather than a second table style. */
+.saveHead { display:flex; gap:12px; align-items:flex-start; margin:2px 0 10px; }
+.saveFace { width:64px; height:64px; image-rendering:pixelated; border:1px solid rgba(155,136,80,.5);
+  border-radius:4px; background:rgba(0,0,0,.35); flex:0 0 auto; }
+.saveHead h3 { margin:0 0 4px; font-size:1rem; }
+.saveH4 { margin:14px 0 6px; font-size:0.875rem; letter-spacing:0; color:#fff; }
+.saveNote { font-size:0.8125rem; color:#b5b2a8; line-height:1.5; margin:6px 2px 8px; }
+.forkTable tr.saveHero td { background:rgba(249,248,111,.10); }
+/* Ten columns is what fits: body, reflex and mind are in the row's own form
+   rather than in the table, since the eleventh column pushed Edit off the
+   right of the panel. */
+.forkTable td.who { min-width:96px; }
+.forkTable tr.saveEditRow td { padding:0; border-bottom:none; }
+/* A record's form: a group a heading, a byte a row, the row's label and
+   input first, where it lives beside them, and what it is under them in
+   the quiet grey. On a phone the where-line wraps under the input. */
+/* The form sits in a row of the records table, which is wider than a
+   phone and scrolls sideways; pinned to its left edge, and given the width
+   that shows when it opens (toggleCharEdit), it reads without scrolling. */
+.saveEditRow .propEdit { position:sticky; left:0; box-sizing:border-box; }
+.charGroup { margin:8px 0 12px; padding:6px 8px; border-left:2px solid rgba(155,136,80,.35); white-space:normal; overflow-wrap:anywhere; }
+.charGroupHead { font-size:0.8125rem; color:#fff; margin:0 0 4px; }
+.charRow { padding:4px 0; border-bottom:1px solid rgba(255,255,255,.05); }
+.charRow label { display:inline-flex; align-items:center; gap:6px; min-width:180px; color:#fff; }
+.charRow input { width:auto; }
+.charWhere { font-size:0.6875rem; color:#8c8980; }
+.charName { color:#8c8980; }
+.charWhat { font-size:0.6875rem; color:#b5b2a8; line-height:1.45; margin:2px 0 0; }
+.charFlags { display:grid; grid-template-columns:repeat(auto-fill, minmax(120px, 1fr)); gap:2px 10px; margin:6px 0 0; font-size:0.75rem; }
+.charFlags label { display:flex; align-items:center; gap:4px; color:#fff; }
+.charFlags input[type=checkbox] { width:auto; min-height:0; margin:0; accent-color:#c4a464; }
+.charActions { display:flex; gap:8px; flex-wrap:wrap; margin:6px 0; }
+.mapToggleGroup input[type=checkbox] { width:auto; min-height:0; margin:0; accent-color:#c4a464; }
+.mapToggleGroup select { width:auto; min-height:30px !important; margin:0;
+  padding:2px 26px 2px 8px !important; font-size:0.75rem !important; }
+.mapToggleGroup input[type=range] { flex:1 1 120px; min-width:90px; }
+.mapToggleGroup #mapHourLabel { min-width:56px; text-align:right; }
+.mapToggleGroup.mtgNotes { background:none; border:0; padding:2px 12px; font-size:0.75rem;
+  color:#b5b2a8; gap:14px; }
+.mapToggleGroup.mtgNotes button { margin:0; }
+@media (max-width:520px) {
+  .mapToggleGroup { font-size:0.7812rem; gap:4px 10px; }
+  .mapToggleGroup .mtgLabel { flex-basis:100%; }
+}
+
+/* ---- The archive menu --------------------------------------------------
+   Choosing a file, forgetting the remembered copy and the loaded-from line
+   used to be three separate things in three corners of the page. They are one
+   small stud in the top-left now, and everything about the data file lives
+   behind it. */
+
+#archiveMenu, #creditsMenu, #searchWrap { position:absolute; top:40px; z-index:42; display:none;
+  min-width:250px; max-width:min(360px, calc(100vw - 24px)); max-height:min(72vh, 640px); overflow:auto;
+  padding:12px 14px; background:rgba(18,15,10,.98); border:1px solid var(--edge);
+  border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.7); font-size:0.7812rem;
+  text-align:left; line-height:1.6; }
+#archiveMenu { right:0; }
+.containedRow { margin:6px 0; }
+#searchWrap, #creditsMenu { right:0; max-width:min(560px, calc(100vw - 24px)); width:min(560px, calc(100vw - 24px)); }
+#archiveMenu.open, #creditsMenu.open, #searchWrap.open { display:block; }
+#creditsMenu h4 { margin:10px 0 3px; font-size:0.8125rem; font-weight:normal; color:#c9bd93; }
+#creditsMenu .creditsIntro { margin:0 0 4px; }
+#creditsMenu .creditsNames { margin:0 0 6px; }
+#creditsMenu ul { margin:0; padding-left:18px; }
+#creditsMenu li { margin:2px 0; }
+#creditsMenu p { margin:8px 0 0; }
+#creditsMenu a { color:var(--gold); text-decoration:none; }
+#creditsCaret { display:none; position:absolute; z-index:43; width:12px; height:12px; transform:rotate(45deg);
+  background:rgba(18,15,10,.98); border-left:1px solid var(--edge); border-top:1px solid var(--edge); }
+#creditsCaret.open { display:block; }
+#searchWrap #searchResults { text-align:left; }
+#archiveMenu button { width:100%; margin:8px 0 0; }
+#archiveMenu label { display:flex; gap:7px; align-items:flex-start; margin-top:10px;
+  padding-top:10px; border-top:1px solid rgba(155,136,80,.35); cursor:pointer; }
+#archiveMenu label input { width:auto; min-height:0; margin:3px 0 0; accent-color:#c4a464; }
+#archiveMenu .amNote { color:#b5b2a8; font-size:0.7188rem; display:block; }
+
+@media (prefers-reduced-motion: reduce) { * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+
+/* ---- Sideways scrollers say so at their edge -----------------------------
+   A tab row or a table wider than the screen slid with no sign that more
+   existed past its right edge, and on a phone the third tab strip was cut
+   mid-word ("Compos", "Sk"). While there is more to the right the element
+   carries .moreRight (scrollHintWatch in js/page-galleries.js keeps it), and
+   the edge fades: a sticky pseudo-element over the tabs, since they are
+   positioned and an inset shadow would paint under them; an inset shadow on
+   a table wrapper, which is painted over the rows. Both are hints, not
+   controls, and take no pointer. */
+.ftabRow::after { content:''; display:none; flex:0 0 34px; margin-left:-34px; align-self:stretch; position:sticky; right:0;
+  z-index:4; pointer-events:none; background:linear-gradient(90deg, rgba(0,0,0,0), var(--fadeTo, rgba(20,15,9,.92))); }
+.ftabRow.moreRight::after { display:block; }
+.ftabRow::before { content:''; display:none; flex:0 0 34px; margin-right:-34px; align-self:stretch; position:sticky; left:0;
+  z-index:4; pointer-events:none; background:linear-gradient(270deg, rgba(0,0,0,0), var(--fadeTo, rgba(20,15,9,.92))); }
+.ftabRow.moreLeft::before { display:block; }
+#tabFolder1 > .ftabRow, #tabFolder2 > .ftabRow { --fadeTo:var(--card); }
+.tableScroll.moreRight { box-shadow:inset -30px 0 22px -20px rgba(0,0,0,.8); }
+.tableScroll.moreLeft { box-shadow:inset 30px 0 22px -20px rgba(0,0,0,.8); }
+.tableScroll.moreLeft.moreRight { box-shadow:inset -30px 0 22px -20px rgba(0,0,0,.8), inset 30px 0 22px -20px rgba(0,0,0,.8); }
+
+/* ---- A phone --------------------------------------------------------------
+   Read from the browser check's screenshots, 19 September 2026. */
+@media (max-width:640px) {
+  /* A box that scrolls inside the page traps the finger: the listing, the
+     decoded text, the hex and the installer's text flow with the page. */
+  .dlgWrap, pre.pane, #textContent, .installerText { max-height:none !important; }
+  /* A script's head and row. The links go under their label rather than
+     beside it, where a 390 px column broke each one over four lines; the
+     row's five views fit one line without the group's rules; the code is a
+     size smaller so a line of it is most of a line (22 September 2026). */
+  #textPreview { padding:10px 6px !important; }
+  #listingSwitch { gap:4px; padding:4px 2px; }
+  #listingSwitch button.dsw { padding:3px 6px !important; min-height:34px; font-size:0.8125rem !important; white-space:nowrap; }
+  #textContent.scriptCode { font-size:0.6875rem; padding:10px 8px; }
+  #resourceNav { gap:0 8px !important; }
+  #resourceNav button { font-size:0.8125rem !important; min-height:34px !important; padding:4px 3px !important; }
+  /* The saved game's place column wrapped to three lines; the table scrolls
+     sideways anyway, so a place keeps its line. */
+  .forkTable td.where { white-space:nowrap; }
+  #topLinks { gap:16px; }
+  /* The name is four words since 2 October 2026 and ran under the links on a
+     phone: there the subtitle and the version take a second line. */
+  #brand { line-height:1.2; }
+  #brand .brandColon { display:none; }
+  #brand .brandSub { display:block; font-size:0.8125rem; font-weight:400; color:#b5b2a8; margin-top:2px; }
+  /* The world on a portrait screen: the viewport was 78vh tall for a square
+     map fitted to its width, so two thirds of it was painted sea, and then
+     a square, which left half the screen empty below it. It is the height
+     of the screen under the tabs now, and the fit is to the island, which
+     is taller than it is wide (atlasLandBounds). */
+  #atlasViewport { height:calc(100vh - 250px); height:calc(100svh - 250px); min-height:320px; aspect-ratio:auto; }
+  /* A zone's map box was 62vh tall round a square map fitted to the
+     screen's width, a band of empty box above and below it and the
+     toggles pushed off the screen. Square on a phone, as most maps are.
+     The inline height is the desktop's and is what the atlas check watches,
+     hence the !important. */
+  #mapViewport { height:auto !important; aspect-ratio:1 / 1; max-height:62vh; }
+  #atlasPanel:fullscreen #atlasViewport, #atlasPanel:-webkit-full-screen #atlasViewport,
+  body.atlasFull #atlasPanel #atlasViewport { height:100% !important; aspect-ratio:auto; }
+}
+
+/* ---- Desktop -----------------------------------------------------------
+   Everything above was sized on a phone, and on a 27-inch screen the whole
+   page sat in a 900px column of 11-13px text. From 900px up the shell
+   widens, the type comes up to ordinary desktop sizes, the tab icons grow
+   with their labels, and the galleries get more, larger cells. Nothing here
+   changes the look -- the folder tabs, the dialogue-box sheet, the yellow-
+   is-clickable rule all stand -- only the scale. The !importants match the
+   ones on the rules they override; a later rule of equal weight wins. */
+@media (min-width: 900px) {
+  #appShell { max-width:1280px; padding:10px 44px calc(112px + env(safe-area-inset-bottom)); }
+  html { font-size:125%; }
+  button, select { font-size:1rem !important; }
+  #brand .brandName { font-size:1.25rem; }
+  .topLink { font-size:1.125rem !important; }
+  #archiveMenuBtn.urgent { font-size:1.0625rem !important; }
+  #archiveMenu .amNote { font-size:0.875rem; color:#c9bd93; }
+  #sourceStatus { font-size:0.9375rem; color:#b3a781; opacity:1; }
+  #sourceStatus.failed { font-size:1.125rem; }
+  .ftab { font-size:1.0625rem !important; padding:9px 18px 8px !important; gap:9px; }
+  .ftab.sel, .ftab.sel:hover { padding:13px 20px 10px !important; }
+  .ftab canvas { width:26px !important; height:26px !important; }
+  .ftab .tabBadge { font-size:0.7812rem; padding:3px 7px; }
+  .tabSheet { padding:16px 16px 20px; }
+  #navSub { gap:8px; margin-bottom:12px; }
+  .navChip { font-size:0.9375rem; padding:8px 16px; }
+  #navSub .navChip, #sheetGrid .navChip { font-size:0.9375rem !important; padding:7px 16px !important; }
+  .sv-chip { font-size:0.9375rem !important; padding:7px 18px !important; }
+  #sheetGrid { grid-template-columns:repeat(auto-fill, minmax(152px, 1fr)); gap:16px; }
+  .cell { height:220px; padding:8px; }
+  .cell.propCell { height:180px; }
+  .cell .lbl { font-size:1.0312rem; }
+  .cell .lbl.nolabel { font-size:0.9062rem; }
+  .scriptRow .srProse { font-size:1.0625rem; }
+  .cell .resid { font-size:0.8438rem; }
+  #labelLegend, #filterNote { font-size:0.9375rem; }
+  .propHead { font-size:0.8438rem; }
+  .forkTable, .changesView { font-size:1rem; }
+  .forkTable th { font-size:0.8438rem; }
+  .forkTable td { padding:7px 9px; }
+  .installerText { font-size:0.9375rem; }
+  .installerVersions .amNote, .installerOpen .amNote { font-size:0.9375rem; }
+  .installerOpen .installerOpenName { font-size:1.375rem; }
+  pre { font-size:1rem; }
+  #output { font-size:0.875rem; }
+  .sv-head .sv-id, .sv-head .sv-lbl { font-size:1.375rem; }
+
+  .sv-head .sv-kind { font-size:0.875rem; }
+  .sv-why { font-size:1.0625rem; }
+  .sv-facts > div { font-size:1rem; }
+  .convHead { font-size:1rem; }
+  .convHead .sv-chip { font-size:0.9375rem !important; }
+  .convBadge { font-size:0.8125rem; }
+  .sr-lines, #paneHex, .peForm, .peForm input, #editBytesNote { font-size:0.8125rem; }
+  .dswitch { font-size:0.8125rem; }
+  .dlgEdit { font-size:0.8125rem; }
+  #resourceNav button { font-size:0.9375rem !important; }
+  /* The muted browns that read on a phone held close are too faint at
+     arm's length: every secondary line comes up a shade. */
+  .tabSheet #labelLegend, .tabSheet #filterNote, .tabSheet .propHead, .tabSheet #exportNote,
+  .tabSheet .sv-why, .tabSheet .crumbNote,
+  .installerVersions .amNote, .installerOpen .amNote { color:#e4dbb8; }
+  .forkTable th, .propHead, .convHead { color:#c3b78d; }
+  .sv-facts > div { color:#fff; }
+  .cell .lbl.nolabel { color:var(--gold); opacity:.72; }
+}
+</style>
+</head>
+<body>
+<div id="appShell">
+<a href="#sheetGrid" class="skipToGallery">Skip to the gallery</a>
+<!-- The page's own controls, in one row at the top of the page and scrolling
+     with it: Settings on the left, the name in the middle, Search and
+     Credits on the right. They were fixed to the viewport until 9 September
+     2026, when the maintainer asked for them to stay at the top like the
+     name. Each opens a panel under this row. -->
+<div id="topBar">
+  <div id="brand" aria-label="Grimoire: A Cythera Experiment"></div>
+  <div id="topLinks">
+    <button id="creditsLink" class="topLink" onclick="toggleCredits()" aria-haspopup="dialog" aria-controls="creditsMenu">Credits</button>
+    <button id="searchLink" class="topLink" onclick="toggleSearch()" title="Search the scripts">Search</button>
+    <button id="archiveMenuBtn" class="topLink" onclick="toggleArchiveMenu()"
+            aria-haspopup="dialog" aria-expanded="false" aria-controls="archiveMenu">Settings</button>
+  </div>
+</div>
+<div id="editNotice" style="display:none" role="status"></div>
+<input type="file" id="fileInput" accept="*/*" onchange="loadArchive()" style="display:none">
+<div id="archiveMenu" role="dialog" aria-label="Settings">
+  <div id="sourceStatus" role="status" aria-live="polite">Looking for the Cythera Data archive…</div>
+  <div id="containedRow" class="sv-chips containedRow" style="display:none"></div>
+  <button class="secondary" id="chooseFileBtn"
+          onclick="document.getElementById('fileInput').click()">Open a different file…</button>
+  <button class="secondary" id="forgetArchiveBtn" onclick="archiveCacheClear()">Forget the remembered copy</button>
+  <!-- The seven ways an edit leaves the page used to be a stack of buttons
+       here. They are the Changes tab now, under Data > Cythera Data, grouped
+       by where the file is going (renderChangesSheet). -->
+  <div id="animModeWrap">Color cycling
+    <label><input type="radio" name="animMode" value="all" onchange="setAnimMode(this.value)"> everything on screen</label>
+    <label><input type="radio" name="animMode" value="graphics" onchange="setAnimMode(this.value)"> graphics only, not the maps</label>
+    <label><input type="radio" name="animMode" value="tiles" onchange="setAnimMode(this.value)"> tile sheets only</label>
+    <label><input type="radio" name="animMode" value="off" onchange="setAnimMode(this.value)"> off</label>
+    <span class="amNote">Water, lava and magic appear to move because the game cycles their colors in the palette, not
+    because the picture changes. This setting controls that, and the walking and turning of sprites in the galleries.
+    It does not affect something drawn from several frames, like a fountain, which is not palette cycling.</span></div>
+  <label><input type="checkbox" id="chkBuiltinLabels" onchange="setBuiltinLabels(this.checked)">
+    <span>Names from outside the game’s text
+      <span class="amNote">Hand-identified labels from the delvmod wiki, resource names,
+      tile-sheet names and the prop-type list the Items, Props and Monsters galleries draw on; and on
+      the World map, one name per place from the editor’s list where the game calls several maps the
+      same thing (“Headwater Ruins” rather than the game’s “Ruins”).
+      Off, every gallery shows only names the file itself contains (0xF004 tile names, zone-entry
+      text, resource symbols); where there is none, the cell says so.</span></span></label>
+  <div id="faceWrap">The font this page uses
+    <label><input type="radio" name="faceChoice" value="game" onchange="setFaceChoice(this.value)"> the game’s, from the open file</label>
+    <label><input type="radio" name="faceChoice" value="chicago" onchange="setFaceChoice(this.value)"> Chicago</label>
+    <label><input type="radio" name="faceChoice" value="system" onchange="setFaceChoice(this.value)"> this device’s</label>
+    <span class="amNote">Cythera uses the font Argos A Nouveau, which the game keeps in its resource fork. The page reads it from
+    whatever file you open and uses it unless you choose otherwise here. With no file open there is nothing to read it from, so the
+    page uses Chicago, Susan Kare’s 1984 font for the Macintosh, recreated by Duane King. This page includes none of the game’s files
+    to stand in for it.</span></div>
+  <div id="unditherWrap">Undither
+    <label><input type="radio" name="unditherScope" value="off" onchange="setUnditherScope(this.value)"> off</label>
+    <label><input type="radio" name="unditherScope" value="portraits" onchange="setUnditherScope(this.value)"> portraits</label>
+    <label><input type="radio" name="unditherScope" value="all" onchange="setUnditherScope(this.value)"> every graphic</label>
+    <span class="amNote">Cythera’s art uses dithering for a 256-color screen. This smooths the checkerboard patterns
+    back into continuous shades. The result is an interpretation of the pixels, not the pixels themselves.</span></div>
+</div>
+<div id="creditsCaret" aria-hidden="true"></div>
+<div id="creditsMenu" role="dialog" aria-label="Credits">
+  <p class="creditsIntro">Grimoire is maintained by <strong>EgadZoundsGadzooks</strong> and rests on decades of work by the Cythera community.</p>
+  <p class="creditsNames">In particular <strong>453</strong>, <strong>Wizard</strong>, <strong>Pallas Athene</strong>, <strong>Selax</strong>, <strong>Tycho Maudd</strong>, <strong>Slayer</strong>, and <a href="http://www.cytheraguides.com/" target="_blank" rel="noopener"><strong>Cythera Guides</strong></a>.</p>
+  <p class="creditsNames"><strong>Bryce Schroeder</strong>, with <strong>sfiera</strong> and <strong>Chaim Halbert</strong>: critical for their work on delvmod and its wiki.</p>
+  <h4>The game</h4>
+  <ul>
+    <li><strong>Glenn Andreas</strong>: engine, scenario, artwork</li>
+    <li><strong>Marcus Conge</strong>: artwork</li>
+    <li><strong>Randy Pringle</strong>: music</li>
+    <li><strong>Andrew Welch</strong>: sounds</li>
+    <li><strong>Ambrosia Software</strong>: publisher</li>
+  </ul>
+  <h4>Code</h4>
+  <p class="creditsNames">The readers for HFS volumes, Installer VISE and StuffIt were written from <strong>Ben Letchford</strong>’s systemless and stuffit-rs, which carry tables from <strong>Dag Ågren</strong>’s The Unarchiver and from <strong>ScummVM</strong>.</p>
+  <h4>Typefaces</h4>
+  <ul>
+    <li><strong>Susan Kare</strong>: Chicago and Geneva, 1984</li>
+    <li><strong>Duane King</strong>: Chicago Kare</li>
+    <li><strong>Kelsey Higham</strong>: Geneva 9.1</li>
+    <li><strong>Brian Connors</strong>: Carthage Sans</li>
+    <li><strong>Sam Wang</strong>: Argos A Nouveau</li>
+  </ul>
+  <p>Everyone named here is credited for work Grimoire draws on. None of them was involved in making it or has endorsed it, and its mistakes are its maintainer's.</p>
+  <p>Grimoire was written with the assistance of Claude, Gemini and Perplexity.</p>
+  <p class="amNote">Cythera™ is copyright ©1993–9 Ambrosia Software, Inc. (R.I.P.) This is an unofficial fan-made tool.</p>
+</div>
+<div id="searchWrap" role="dialog" aria-label="Search" style="display:none">
+  <p class="sv-why" style="margin:0 0 8px">Searches every decoded script at once:
+  instruction names, calls to the program and the text the player sees.</p>
+  <input id="searchBox" type="search" placeholder="fire, TakeDamage, who teaches axe&hellip;" oninput="queueSearch()">
+  <div id="searchResults"></div>
+  <div id="searchPresets" class="sv-chips" style="justify-content:center;margin-top:8px"></div>
+</div>
+<!-- The folder-tab shell. Three tab rows, each the lip of a folder, nested;
+     the innermost folder holds the sheet everything below is drawn on. The
+     rows are filled by syncTabsTo() from TAB_TREE; the hidden <select> further
+     down stays the one source of truth for which category is open, and the
+     tabs only point at it. -->
+<div id="tabShell" data-depth="0">
+  <div id="tabRow1" class="ftabRow" role="tablist"></div>
+  <div id="tabFolder1" class="folder f1">
+    <div id="tabRow2" class="ftabRow" role="tablist"></div>
+    <div id="tabFolder2" class="folder f2">
+      <div id="tabRow3" class="ftabRow" role="tablist"></div>
+      <div id="tabFolder3" class="folder f3">
+        <div id="tabSheet" class="tabSheet">
+<div id="navSub"></div>
+<div id="navSubNote"></div>
+<!-- The category <select> is now driven by the icon bar above and is hidden.
+     It stays in the DOM because every other code path treats it as the single
+     source of truth for the current category. -->
+<div id="pickerWrap" style="display:none; height:0; overflow:hidden">
+  <select id="categorySelect" onchange="onCategoryChange()">
+      <optgroup label="People & creatures">
+        <option value="CHARACTERS">Characters (all info)</option>
+        <option value="SCHEDULES">Schedules (where everyone is, hour by hour)</option>
+        <option value="PROPS">Sprites, by prop type</option>
+        <option value="ITEMS">Inventory Items</option>
+        <option value="SCENERY">Scenery (placed things, whole)</option>
+        <option value="RSRC">Editor Stamps &amp; Brushes</option>
+        <option value="MACRSRC">Resource Fork (all types)</option>
+        <option value="MONSTERS">Monster Stats (0xF008)</option>
+        <option value="RECORDS">Records (the tables that make up the scenario)</option>
+        <option value="135">Portraits (64x64)</option>
+        <option value="137">Skill & Spell Icons (32×16)</option>
+        <option value="24">Monster Class Scripts (0x19xx)</option>
+        <option value="25">Skill & Spell Classes (0x1Axx)</option>
+      </optgroup>
+      <optgroup label="World">
+        <option value="WORLD">The world of Cythera</option>
+        <option value="127">Maps (0x80xx, structured)</option>
+        <option value="128">Prop Lists (0x81xx, structured)</option>
+        <option value="131">Landscapes (288x32)</option>
+        <option value="19">Zone Entry Scripts (0x14xx)</option>
+        <option value="20">Sub-zone Scripts (0x15xx)</option>
+      </optgroup>
+      <optgroup label="Graphics">
+        <option value="141">Tile Sheets (4x4 grid of 16 tiles)</option>
+        <option value="142">General Graphics (variable size)</option>
+        <option value="SCREENS">Screens (resource fork)</option>
+        <option value="COMPOSITE">Composite Tiles (stitched from fragments)</option>
+        <option value="143">Music (0x90xx, QTMA, raw only)</option>
+        <option value="144">Sounds (playable audio)</option>
+        <option value="APPSND">Application sounds (resource fork)</option>
+      </optgroup>
+      <optgroup label="Text & dialogue">
+        <option value="1">Text & Names (0x02xx)</option>
+        <option value="STRINGS">Strings (resource forks)</option>
+        <option value="FONTS">Fonts (resource fork)</option>
+        <option value="BARKS">Barks (the lines over a character's head)</option>
+        <option value="23">Character Dialogue (0x18xx)</option>
+        <option value="0">Global Symbols & Scripts (0x01xx)</option>
+      </optgroup>
+      <optgroup label="Scripts">
+        <option value="3">AI Combat Scripts (0x04xx)</option>
+        <option value="7">Generic Group Dialogue (0x08xx)</option>
+        <option value="8">Combat AI Tests &amp; Actions (0x09xx)</option>
+        <option value="9">Eating & Potion Effects (0x0Axx)</option>
+        <option value="11">Task Helpers (0x0Cxx)</option>
+        <option value="12">Party &amp; Inventory Helpers (0x0Dxx)</option>
+        <option value="13">Rule Helpers (0x0Exx)</option>
+        <option value="14">Character Helpers (0x0Fxx)</option>
+        <option value="15">Object Interaction Text (0x10xx)</option>
+        <option value="16">Object Scripts (0x11xx)</option>
+        <option value="26">Room Scripts A (0x1Bxx)</option>
+        <option value="27">Room Scripts B (0x1Cxx)</option>
+        <option value="29">Room Scripts C (0x1Exx)</option>
+        <option value="47">Character Action Scripts (0x30xx)</option>
+      </optgroup>
+      <optgroup label="Other subindexes">
+        <option value="239">Game Data Tables (0xF0xx)</option>
+        <option value="4">Archetypes (0x05xx)</option>
+        <option value="2">Global Store (0x03xx)</option>
+        <option value="10">Stub Script (0x0Bxx)</option>
+      </optgroup>
+      <!-- Views that are not a subindex, under the Data tab. They are options
+           so that the tabs, the deep links and the smoke test treat them like
+           any other category. -->
+      <optgroup label="Data">
+        <option value="SAVEGAME">Saved game: the party and everyone else</option>
+        <option value="PREFS">Cythera Preferences: the game's settings file</option>
+        <option value="PATCHES">Patches: read one, make one, compare two files</option>
+        <option value="CHEATS">Cheat mode: the keys, and how to switch it on</option>
+        <option value="DATAFORK">Data fork (every subindex)</option>
+        <option value="CHANGES">Changes this session</option>
+        <option value="INSTALLER">The installer: every file in it</option>
+        <option value="APPRSRC">Cythera application: resource fork</option>
+        <option value="APPPEF">Cythera application: data fork (PEF)</option>
+        <option value="AISCRIPTS">Combat AI scripts (.ai)</option>
+        <option value="AIRULES">Combat AI rules</option>
+        <option value="MECHANICS">Mechanics (read from the scripts)</option>
+        <!-- One per group of the Mechanics sheet, in the maintainer's order
+             (14 September 2026). MECHANICS itself is kept above because it
+             draws the whole sheet, which the smoke's pins read; a deep link
+             naming it opens the first group (parseDeepLink). -->
+        <option value="MECH_PROGRESS">Progress: what a character gains</option>
+        <option value="MECH_STATUS">Status: the body and the clock</option>
+        <option value="MECH_INTERACT">Interactions: what a thing does when it is used</option>
+        <option value="MECH_PUZZLES">Puzzles: the ones the file fully explains</option>
+        <option value="MECH_COMBAT">Combat: what a blow does</option>
+        <option value="MECH_ECONOMY">Economy: what things cost</option>
+        <option value="HACKERY">Hackery: how the scenario works underneath</option>
+        <option value="SKILLS">Skills (each one, with everything the file says about it)</option>
+        <option value="SPELLS">Spells (each one, with what it does)</option>
+        <option value="TOOLS">Tools</option>
+      </optgroup>
+    </select>
+  <!-- The "Choose a Resource" dropdown is gone. Resources are picked from the
+       gallery and stepped through with Previous/Next. The <select> itself stays
+       in the DOM, hidden, because it is still the single source of truth for
+       which resource is selected -- navigateResource, jumpToResource and the
+       character map jump all read and write it. -->
+  <div id="singleControls" style="display:none">
+    <select id="residSelect" onchange="setMode('single')"></select>
+  </div>
+</div>
+  <div id="propFilterWrap" style="display:none">
+    <input id="propFilter" type="search" placeholder="filter this gallery by name or 0x id&hellip;"
+           aria-label="Filter this gallery" oninput="setPropFilter(this.value)">
+    <div id="filterNote"></div>
+  </div>
+<div id="resourceNav" style="display:none">
+  <button id="backToSheet" class="secondary" onclick="returnToSheet()">All of this gallery</button>
+  <button class="secondary" onclick="navigateResource(-1)">Previous</button>
+  <button class="secondary" onclick="navigateResource(1)">Next</button>
+  <button class="secondary" id="editAnyBtn" style="display:none" onclick="startResourceEdit()">Edit bytes</button>
+  <button class="secondary" id="editCodeBtn" style="display:none" onclick="startCodeEdit()">Change code</button>
+</div>
+<!-- The byte editor sits beside the resource navigation rather than inside
+     the text viewer, so that every open resource can be edited -- a portrait,
+     a sound or a map as readily as a script. Same editor, same rebuild. -->
+<div id="editBytesWrap" style="display:none">
+  <div id="editBytesNote"></div>
+  <textarea id="editBytesText" spellcheck="false" autocomplete="off"></textarea>
+  <div>
+    <button onclick="applyResourceEditFromText()">Apply and rebuild the file</button>
+    <button class="secondary" onclick="cancelResourceEdit()">Cancel</button>
+  </div>
+</div>
+<!-- The code editor: instructions in the listing's own words, put in at a
+     line and relinked (js/delv-asm.js), then the same rebuild as Edit bytes. -->
+<div id="editCodeWrap" style="display:none">
+  <div id="editCodeNote"></div>
+  <div class="editCodeRow">
+    <label>At <input id="editCodeAt" type="text" spellcheck="false" autocomplete="off" placeholder="0x0000"></label>
+    <label>Take out up to <input id="editCodeTo" type="text" spellcheck="false" autocomplete="off" placeholder="nothing"></label>
+  </div>
+  <textarea id="editCodeText" spellcheck="false" autocomplete="off" placeholder="one instruction a line, as the listing prints them"></textarea>
+  <div>
+    <button onclick="previewCodeEdit()">Preview</button>
+    <button onclick="applyCodeEdit()">Apply and rebuild the file</button>
+    <button class="secondary" onclick="cancelCodeEdit()">Cancel</button>
+  </div>
+  <pre id="editCodePreview"></pre>
+</div>
+<div id="singlePreview" style="display:none">
+  <div id="canvasViewport"><canvas id="canvas" width="64" height="64"></canvas></div>
+  <button class="secondary" onclick="downloadCurrentPNG()">Save as PNG</button>
+  <button class="secondary" onclick="downloadCurrentGIF()">Save as GIF</button>
+  <button class="secondary" onclick="sendToCanvas()">Edit in ColorCycleCanvas</button>
+  <!-- The undither preview for this one picture, back since 19 September
+       2026 (it went with the Settings switch on the 9th, and the maintainer
+       asked for it): the switch under Settings stays the standing choice,
+       this shows the other reading of the picture in hand. -->
+  <button class="secondary" id="unditherBtn" style="display:none" onclick="toggleUnditherPreview()">Preview undithered</button>
+</div>
+<div id="artUsage" style="display:none"></div>
+
+<!-- Map Visual Preview (top-down rendered map + props) -->
+<div id="mapPreview" style="display:none; margin-top:12px; padding:14px; background:var(--panel); border:1px solid var(--edge); border-radius:8px; text-align:center;">
+  <div id="mapLabel" style="margin-bottom:8px; font-weight:600;"></div>
+  <div id="mapParts"></div>
+  <div id="mapStage" style="position:relative; width:100%; max-width:720px; margin:0 auto 6px; padding:22px;">
+<div id="mapViewport" style="position:relative; width:100%; height:62vh; margin:0; overflow:hidden; border:1px solid var(--edge); background:#222; touch-action:none; cursor:grab; border-radius:6px;">
+    <div id="mapCanvasWrap" style="position:absolute; top:0; left:0; transform-origin:0 0; z-index:1;"></div>
+    <div id="mapHover"></div>
+  </div>
+<button class="mapArrowBtn" id="mapArrowUp"    onclick="panMapByArrow(0,-1)"  style="position:absolute; top:2px; left:50%; transform:translateX(-50%);" aria-label="Pan up"><span class="chev up"></span></button>
+<button class="mapArrowBtn" id="mapArrowDown"  onclick="panMapByArrow(0,1)"   style="position:absolute; bottom:2px; left:50%; transform:translateX(-50%);" aria-label="Pan down"><span class="chev down"></span></button>
+<button class="mapArrowBtn" id="mapArrowLeft"  onclick="panMapByArrow(-1,0)"  style="position:absolute; left:0; top:50%; transform:translateY(-50%);" aria-label="Pan left"><span class="chev left"></span></button>
+<button class="mapArrowBtn" id="mapArrowRight" onclick="panMapByArrow(1,0)"   style="position:absolute; right:0; top:50%; transform:translateY(-50%);" aria-label="Pan right"><span class="chev right"></span></button>
+</div>
+  <div class="zoomrow" style="max-width:720px; margin:10px auto 0;">
+    <span style="white-space:nowrap;">Zoom:</span>
+    <input type="range" id="mapZoomSlider" min="5" max="400" value="100" oninput="onMapZoomSlider()">
+    <span id="mapZoomLabel" style="min-width:52px; text-align:right;">100%</span>
+    <button class="secondary" style="width:auto; margin:0; padding:8px 14px;" onclick="onMapFit()">Fit</button>
+  </div>
+  <!-- The toggles sit straight under the zoom row (22 September 2026): they
+       were below the square's panel and the save buttons, a screen away from
+       the map they change on a phone. -->
+  <div id="charControls">
+    <div class="mapToggleGroup">
+      <span class="mtgLabel">Show</span>
+      <label><input type="checkbox" id="chkWalls" checked onchange="toggleWalls(this.checked)"> Walls</label>
+      <label><input type="checkbox" id="chkRoofs" onchange="toggleRoofs(this.checked)"> Roofs</label>
+      <label><input type="checkbox" id="chkChars" checked onchange="toggleCharacters(this.checked)"> Inhabitants</label>
+      <label><input type="checkbox" id="chkCharNames" checked onchange="toggleCharNames(this.checked)"> Names</label>
+      <label><input type="checkbox" id="chkBarks" checked onchange="toggleBarks(this.checked)"> Barks</label>
+      <label><input type="checkbox" id="chkLighting" onchange="toggleLighting(this.checked)"> Lighting</label>
+
+    </div>
+    <div class="mapToggleGroup">
+      <span class="mtgLabel">Mark</span>
+      <label><input type="checkbox" id="chkMarkDoors" onchange="toggleMapMarks('doors',this.checked)"> Doors</label>
+      <label><input type="checkbox" id="chkMarkSecret" onchange="toggleMapMarks('secret',this.checked)"> Hidden ways</label>
+      <label><input type="checkbox" id="chkMarkChest" onchange="toggleMapMarks('chest',this.checked)"> Containers</label>
+      <label><input type="checkbox" id="chkMarkExits" onchange="toggleMapMarks('exits',this.checked)"> Zone exits</label>
+      <label><input type="checkbox" id="chkMarkGrid" onchange="toggleMapMarks('grid',this.checked)"> Grid</label>
+      <label><input type="checkbox" id="chkMarkRooms" onchange="toggleMapMarks('rooms',this.checked)"> Rooms</label>
+      <label><input type="checkbox" id="chkMarkEggs" onchange="toggleMapMarks('eggs',this.checked)"> Eggs</label>
+      <label><input type="checkbox" id="chkMarkPath" onchange="toggleMapMarks('path',this.checked)"> Path of</label>
+      <label><input type="checkbox" id="chkMarkSave" onchange="toggleMapMarks('save',this.checked)"> Save</label>
+      <select id="pathWho" onchange="setMapPathWho(this.value)"></select>
+    </div>
+    <div class="mapToggleGroup">
+      <span class="mtgLabel">Time</span>
+      <label><input type="checkbox" id="chkWalk" onchange="toggleMapWalk(this.checked)"> Walk the day</label>
+      <label style="gap:6px">Speed
+        <select id="walkSpeed" onchange="setMapWalkSpeed(this.value)">
+          <option value="0.25">0.25&times;</option>
+          <option value="1" selected>1&times;</option>
+          <option value="4">4&times;</option>
+          <option value="12">12&times;</option>
+          <option value="40">40&times;</option>
+        </select>
+      </label>
+      <input type="range" id="mapHourSlider" min="0" max="23" value="12" oninput="setMapHour(this.value)">
+      <span id="mapHourLabel">12 pm</span>
+    </div>
+    <div class="mapToggleGroup mtgNotes">
+      <span id="charCount"></span>
+      <span id="wallNote"></span>
+      <span id="roofNote"></span>
+      <span id="mapAnimNote"></span>
+      <button id="charBackLink" class="secondary" style="display:none"></button>
+    </div>
+  </div>
+  <div id="markLegend" style="font-size:0.75rem; margin-top:6px; min-height:16px;"></div>
+  <div id="mapInspect" style="display:none"></div>
+  <div id="mapSaveRow" style="margin-top:8px;">
+    <button class="secondary" onclick="downloadMapPNG()">Save Map as PNG</button>
+    <button class="secondary" onclick="showZoneOnWorld()">Show on the world</button>
+  </div>
+
+</div>
+
+<!-- New Text & Hex Viewer -->
+<div id="textPreview" style="display:none; margin-top:12px; padding:14px; background:var(--panel); border:1px solid var(--edge); border-radius:8px;">
+  <div id="textLabel" style="color:#fff; margin-bottom:10px; font-size:1rem; text-align:center;"></div>
+  <div id="scriptView"></div>
+  <!-- A script's one row of views: its code two ways, its bytes, its words.
+       Every other resource keeps the Decoded / Strings / Hex bar below. -->
+  <div id="listingSwitch" class="dswitch" style="display:none">
+    <button id="listStructured" class="dsw active" onclick="setScriptFold('structured')">Structured</button>
+    <button id="listRaw" class="dsw" onclick="setScriptFold(false)">Raw</button>
+    <button id="listHex" class="dsw" onclick="setScriptPane('hex')">Hex</button>
+    <button id="listText" class="dsw" onclick="setScriptPane('text')">Text</button>
+    <button id="listRead" class="dsw" onclick="setScriptPane('read')">Read</button>
+  </div>
+  <div id="dlgWrap" class="dlgWrap" style="display:none"></div>
+  <div id="viewTabs" class="tabbar">
+    <button class="tab active" id="tabDecoded" onclick="showPane('textContent')">Decoded</button>
+    <button class="tab" id="tabStrings" onclick="showPane('paneStrings')">Strings</button>
+    <button class="tab" id="tabHex" onclick="showPane('paneHex')">Hex</button>
+  </div>
+  <pre id="textContent" class="pane"></pre>
+  <pre id="paneStrings" class="pane" style="display:none"></pre>
+  <pre id="paneHex" class="pane" style="display:none"></pre>
+  <div id="scriptRefs" style="display:none"></div>
+  <div id="tableInspector" style="display:none"></div>
+  <button class="secondary" onclick="downloadCurrentRawBytes()">Download Raw Bytes</button>
+  <button class="secondary" id="midiBtn" style="display:none" onclick="downloadCurrentMidi()">Download as MIDI</button>
+</div>
+
+<div id="zoomControls" style="display:none">
+  <div style="display:flex;gap:10px;align-items:center;justify-content:center;margin-bottom:6px;flex-wrap:wrap">
+    <span id="animNote" style="display:none;font-size:0.75rem;color:#c9bd90;">cycling 0xE0 to 0xFB</span>
+  </div>
+  <div class="zoomrow">
+    <label style="font-size:0.75rem;">Zoom</label>
+    <input type="range" id="zoomSlider" min="1" max="16" value="4" oninput="applyZoom()">
+    <span id="zoomLabel" style="font-size:0.75rem;">4x</span>
+  </div>
+</div>
+<div id="soundPreview" style="display:none; margin-top:12px; padding:14px; background:#111; border:2px solid #C4A464; border-radius:8px;">
+  <div id="soundLabel" style="color:#fff; margin-bottom:10px; font-size:0.875rem;"></div>
+  <canvas id="waveform" width="900" height="160"></canvas>
+  <audio id="audioPlayer" controls style="width:100%; margin-bottom:10px;"></audio>
+  <button class="secondary" onclick="downloadCurrentWAV()">Save as WAV</button>
+</div>
+<div id="labelLegend" style="display:none"><span class="guessTag">wiki</span>, this page supplies this name
+from the delvmod wiki; it is not in the file. Turn these names on or off under
+&ldquo;Settings&rdquo;.</div>
+<div id="galleryTools" style="display:none">
+  <span id="galleryArrange">
+    <label id="gallerySortWrap">Sort
+      <select id="gallerySortSel" onchange="setGallerySort(this.value)">
+        <option value="archive">as the file has them</option>
+        <option value="name">by name</option>
+        <option value="id">by id</option>
+        <option value="size">by size, largest first</option>
+      </select>
+    </label>
+    <span id="sheetShapeWrap" style="display:none">
+      <label>Sheets as
+        <select id="sheetShapeSel" onchange="setSheetShape(this.value)">
+          <option value="grid">4&times;4 grid</option>
+          <option value="column">one column (as stored)</option>
+          <option value="row">one row</option>
+          <option value="tiles">separated tiles</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="chkSheetGrid" onchange="setSheetGridlines(this.checked)"> grid lines</label>
+    </span>
+  </span>
+  <button class="secondary" id="ditherBtn" style="display:none" onclick="openDitherTool()">Ditherize an image…</button>
+  <button class="secondary" id="exportBtn" onclick="exportGallery()">Save this gallery as .zip</button>
+  <span id="exportNote"></span>
+</div>
+<div id="sheetGrid" role="group" aria-label="Resource gallery"></div>
+<pre id="output" role="status" aria-live="polite">Load the archive to begin...</pre>
+        </div>
+        <!-- The atlas's own panel, beside the sheet rather than inside it.
+
+             It used to borrow the map panel and hide the furniture it did not
+             want, and that sharing produced every regression the World tab
+             has had: first CUR_MAP, then the panel's own elements, then the
+             class that unframed the sheet. Nothing here is shared with
+             anything, so there is nothing to put back. Being a sibling of the
+             sheet is also what puts the folder behind the map, which is the
+             right ground for it: the sheet is the game's dialogue box, and a
+             map of the world is not a line of dialogue. -->
+        <div id="landingGate" style="display:none" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
+          <div class="gateCard">
+            <h2 id="gateTitle">Grimoire</h2>
+            <!-- The maintainer's own words, 9 September 2026. -->
+            <p>This site displays the data from the game Cythera (1999) in an interactive
+              encyclopedic fashion. Opening it downloads its installer from archive.org, about
+              <b>28&nbsp;MB</b>, and keeps a copy in this browser. The copy can be cleared in
+              Settings. While generative AI was used to help code this site, as much of the data
+              displayed as possible is being read directly from the supplied file.</p>
+            <!-- The maintainer's words, 10 September 2026, punctuation his. -->
+            <p class="gateSpoiler">This site is intended as a resource for those who have already finished the game, spoilers abound!!</p>
+            <p class="gateHint">On the map: pinch or scroll to zoom, drag to move, tap a ring to
+              go inside a tunnel or city, hover or hold on props or people for details.</p>
+            <div class="gateRow">
+              <button id="gateGo" onclick="landingGateAnswer('download')">Download and open</button>
+              <button class="secondary" onclick="landingGateAnswer('own')">Supply a source file</button>
+            </div>
+          </div>
+        </div>
+        <div id="atlasPanel" style="display:none">
+          <div id="atlasBar" style="display:none"></div>
+          <div id="atlasViewport"><div id="atlasHover"></div><div id="atlasFade"></div></div>
+          <div id="atlasFullOverlay" style="display:none">
+            <button class="secondary" id="atlasFullUp" style="display:none;width:auto;margin:0;padding:5px 9px" onclick="atlasRiseOut()">Up</button>
+            <span id="atlasFullWhere"></span>
+            <button class="secondary" style="width:auto;margin:0;padding:5px 9px" onclick="atlasToggleFull()">Full screen off</button>
+          </div>
+          <div id="atlasZoomRow" class="zoomrow">
+            <span style="white-space:nowrap">Zoom</span>
+            <input type="range" id="atlasZoomSlider" min="0" max="1000" value="0"
+                   aria-label="Zoom" oninput="atlasZoomFromSlider()">
+            <span id="atlasZoomLabel" style="min-width:74px; text-align:right"></span>
+            <button class="secondary" id="atlasFullBtn" style="width:auto;margin:0;padding:8px 14px"
+                    onclick="atlasToggleFull()">Full screen</button>
+          </div>
+          <!-- The same clock as the Zones view's Time row: the hour carries
+               between the two tabs (syncMapTimeControls). Walking the day
+               and the barks are the Zones view's alone since 28 September
+               2026 (the maintainer, on the World tab's jerk). -->
+          <div id="atlasTimeRow" class="zoomrow">
+            <input type="range" id="atlasHourSlider" min="0" max="23" value="12" aria-label="Hour" oninput="setMapHour(this.value)">
+            <span id="atlasHourLabel">12:00 pm</span>
+          </div>
+          <div id="atlasInspect"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- The generic classic-Mac formats. Classic scripts, in dependency
+     order, deliberately NOT type="module": a module is fetched with CORS and
+     a page opened from file:// has an opaque origin, so modules would not load
+     when this file is double-clicked instead of served. -->
+<script src="js/mac-bytes.js"></script>
+<script src="js/mac-containers.js"></script>
+<script src="js/mac-resfork.js"></script>
+<script src="js/mac-media.js"></script>
+<script src="js/mac-rsrc-types.js"></script>
+<script src="js/mac-export.js"></script>
+<script src="js/mac-hfs.js"></script>
+<script src="js/mac-stuffit.js"></script>
+<script src="js/mac-vise.js"></script>
+<script src="js/mac-zip.js"></script>
+<script src="js/mac-pef.js"></script>
+<script src="js/mac-ppc.js"></script>
+<script src="js/mac-ppc-asm.js"></script>
+<!-- Cythera's own formats, on top of the generic Mac ones above:
+     the archive, its graphics decoder, and its script VM. Same rule --
+     classic scripts, never type="module". See js/delv-archive.js. -->
+<script src="js/delv-archive.js"></script>
+<script src="js/delv-graphics.js"></script>
+<script src="js/delv-script.js"></script>
+<script src="js/delv-asm.js"></script>
+<script src="js/delv-fold.js"></script>
+<!-- The rules as models: the arithmetic behind the Mechanics sheet, in
+     numbers rather than markup, and cross-checked against an independent
+     simulation by utilities/mech_check.mjs. Last, since it needs nothing. -->
+<script src="js/delv-mechanics.js"></script>
+<!-- The program's own fixes: what they change, as data, and the applier
+     that writes them into the PowerPC code with js/mac-ppc-asm.js. -->
+<script src="js/delv-appfixes.js"></script>
+<script src="js/delv-apppatch.js"></script>
+<!-- The scenario's fixes: what each changes, as data, and the applier that
+     writes them into Cythera Data with js/delv-asm.js, for a Magpie patch. -->
+<script src="js/delv-datafixes.js"></script>
+<script src="js/delv-datapatch.js"></script>
+<!-- Cythera Data in another language: where its text is, and the applier
+     that writes a translation into both forks. The Spanish table itself,
+     js/delv-es.js, is loaded only when it is asked for. -->
+<script src="js/delv-translate.js"></script>
+<!-- The sheet scaffolding: how a section of a rules sheet is built, and how
+     the Mechanics sheet is arranged. Last, because it is the only one of
+     these that knows anything about the page's furniture. -->
+<script src="js/delv-sheets.js"></script>
+<script src="js/delv-mapview.js"></script>
+
+<!-- The page itself, in fourteen files: what turns bytes into the sheets,
+     galleries, maps and cards on screen. These know the page's furniture and
+     load after everything above. Still classic scripts, for file://. They were
+     one inline block until 16 September 2026, cut at its section banners. -->
+<script src="js/page-labels.js"></script>
+<script src="js/page-props.js"></script>
+<script src="js/page-fork.js"></script>
+<script src="js/page-archive.js"></script>
+<script src="js/page-map.js"></script>
+<script src="js/page-inspector.js"></script>
+<script src="js/page-atlas.js"></script>
+<script src="js/page-tabs.js"></script>
+<script src="js/page-data.js"></script>
+<script src="js/page-rules.js"></script>
+<script src="js/page-mechanics.js"></script>
+<script src="js/page-views.js"></script>
+<script src="js/page-export.js"></script>
+<script src="js/page-galleries.js"></script>
+<!-- The version and the brand line stay in the page: version_check.mjs reads
+     the constant here, and the brand line runs at load and needs the files
+     above. -->
+<script>
+/* The version. Started at 1.0.0 on 5 September 2026, when the site had
+   been public for two days and the maintainer asked for one; the number is
+   bumped by hand in the commit that changes what a visitor sees -- the
+   middle number for a feature, the last for a fix -- and shown at the top
+   of the page. Nothing else reads it. */
+const GRIMOIRE_VERSION = '1.240.0';
+/* The name at the top, and the tab's icon. The grimoire's own tile (prop
+   76, the book) stands before the name and is the page's icon once a file
+   is open to draw it from (the maintainer, 9 September and 2 October 2026);
+   nothing of the game's is committed for it, so before a file opens the
+   browser shows its default. Drawn at boot and again by parseArchiveBytes
+   once a file has opened. The empty data: icon above keeps the browser from
+   asking the server for a favicon.ico that is not there. */
+function drawBrand() {
+  const b = document.getElementById('brand');
+  let tile = '', icon = '';
+  try {
+    // Nothing is read before a file is open: the prop table caches what it
+    // finds, and read with no file it cached nothing for the whole session
+    // (the decoder snapshot's chest went null, 2 October 2026).
+    if (ARCHIVE) {
+      const spec = { tile: getPropTileList()[76] || 0x21F };
+      tile = relIconURL(spec);
+      const c = navIconCanvas(spec, 32); icon = c.width ? c.toDataURL('image/png') : '';
+    }
+  } catch (e) { quiet(e, 'the brand tile'); tile = ''; icon = ''; }
+  if (b) b.innerHTML = (tile ? '<img class="brandTile" src="' + tile + '" alt="" width="20" height="20"> ' : '') +
+    '<span class="brandName">Grimoire<span class="brandColon">:</span> <span class="brandSub">A Cythera Experiment <span class="brandVer">v' + svEsc(GRIMOIRE_VERSION) + '</span></span></span>';
+  const fav = document.getElementById('favicon');
+  if (fav && icon) { fav.type = 'image/png'; fav.href = icon; }
+}
+drawBrand();
+</script>
+</div>
+
+
+
+</body>
+</html>
