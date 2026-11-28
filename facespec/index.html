@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>faces</title>
+<style>
+@font-face { font-family:'ChicagoKare'; src:url('res/ChicagoKare-Regular.woff2') format('woff2'); font-display:swap; }
+@font-face { font-family:'Carthage'; src:url('res/CarthageSans-Regular.woff2') format('woff2'); font-display:swap; }
+:root {
+  --gold: rgb(249,248,111);
+  --edge: #9b8850;
+  --sys: -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --chicago: 'ChicagoKare', var(--sys);
+  --carthage: 'Carthage', var(--sys);
+  --chicarth: 'ChicagoKare', 'Carthage', var(--sys);
+}
+* { box-sizing:border-box; }
+body { margin:0; padding:14px 16px calc(40px + env(safe-area-inset-bottom));
+  background:#211c16; color:#fff; font-synthesis:none;
+  font-family:var(--chicago); font-size:0.875rem; line-height:1.5; }
+h1 { font-size:1.125rem; margin:0 0 4px; color:#fff; }
+h2 { font-size:0.9375rem; margin:0; color:var(--gold); }
+.note { color:#bdb6a6; font-size:0.75rem; line-height:1.4; margin:2px 0 10px; font-family:var(--sys); }
+section { border:1px solid var(--edge); border-radius:6px; padding:10px 12px; margin:14px 0;
+  background:rgba(20,18,14,.86); }
+.head { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:8px;
+  border-bottom:1px solid rgba(155,136,80,.45); padding-bottom:6px; }
+.head .tag { font-family:var(--sys); font-size:0.6875rem; color:#bdb6a6; }
+.crumb { color:var(--gold); font-size:0.8125rem; margin:8px 0 6px; }
+.lede { font-size:1.125rem; line-height:1.35; margin:6px 0; }
+.body { font-size:0.875rem; margin:6px 0; }
+.small { font-size:0.75rem; color:#e6e0d2; margin:6px 0; }
+.mono11 { font-size:11px; line-height:1.32; margin:6px 0; }
+table { border-collapse:collapse; width:100%; font-size:0.75rem; margin:8px 0 2px; }
+th { text-align:left; color:#bdb6a6; font-weight:400; padding:2px 8px 2px 0; }
+td { padding:2px 8px 2px 0; }
+td.n { color:var(--gold); }
+.marks { font-size:0.875rem; margin:8px 0 0; }
+.marks b { font-weight:400; color:var(--gold); }
+.f-chicago { font-family:var(--chicago); }
+.f-carthage { font-family:var(--carthage); }
+.f-sys { font-family:var(--sys); }
+.f-chicarth { font-family:var(--chicarth); }
+.roles h2, .roles .crumb { font-family:var(--chicago); }
+.roles .lede, .roles .body { font-family:var(--carthage); }
+.roles table, .roles .small, .roles .mono11 { font-family:var(--carthage); }
+footer { color:#8d8778; font-size:0.6875rem; font-family:var(--sys); margin-top:18px; line-height:1.5; }
+</style>
+</head>
+<body>
+
+<h1>three faces, the same page furniture</h1>
+<p class="note">Each block is the same text at the sizes grimoire actually uses: crumb 13px, lede 18px, body 14px, labels 12px, the character grid 11px. Geneva 9 is not here yet — it joins when the FontStruct file arrives. Marks the face lacks fall through to the next family in its stack, which is what the last line of each block is for.</p>
+
+<section>
+  <div class="head"><h2>Chicago Kare</h2><span class="tag">what the page wears now · MIT · 9.4 KB</span></div>
+  <div class="f-chicago">
+    <div class="crumb">Cythera Data › Components › Actors › Magpie</div>
+    <div class="lede">A patch is a Delver Archive carrying the same scenario header as this file.</div>
+    <div class="body">The words the scripts are written in come from the application's resource fork; the compiled form the engine runs is subindex 3. Every action a file can name except Continue and Debug is a script a scenario can rewrite.</div>
+    <table>
+      <tr><th>skill</th><th>rank</th><th>base</th></tr>
+      <tr><td>melee</td><td class="n">14</td><td class="n">0x0E</td></tr>
+      <tr><td>archery</td><td class="n">9</td><td class="n">0x09</td></tr>
+      <tr><td>stealth</td><td class="n">22</td><td class="n">0x16</td></tr>
+    </table>
+    <div class="small">NFNT 25740, 16×14 cell, ascent 12, 24 letters drawn</div>
+    <div class="mono11">ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</div>
+    <div class="marks">marks: <b>›</b> <b>·</b> <b>–</b> <b>¼</b> <b>‡</b> <b>→</b></div>
+  </div>
+</section>
+
+<section>
+  <div class="head"><h2>Carthage Sans</h2><span class="tag">Espy Sans, which the application names for Text · OFL/CC-BY-SA · 5.2 KB</span></div>
+  <div class="f-carthage">
+    <div class="crumb">Cythera Data › Components › Actors › Magpie</div>
+    <div class="lede">A patch is a Delver Archive carrying the same scenario header as this file.</div>
+    <div class="body">The words the scripts are written in come from the application's resource fork; the compiled form the engine runs is subindex 3. Every action a file can name except Continue and Debug is a script a scenario can rewrite.</div>
+    <table>
+      <tr><th>skill</th><th>rank</th><th>base</th></tr>
+      <tr><td>melee</td><td class="n">14</td><td class="n">0x0E</td></tr>
+      <tr><td>archery</td><td class="n">9</td><td class="n">0x09</td></tr>
+      <tr><td>stealth</td><td class="n">22</td><td class="n">0x16</td></tr>
+    </table>
+    <div class="small">NFNT 25740, 16×14 cell, ascent 12, 24 letters drawn</div>
+    <div class="mono11">ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</div>
+    <div class="marks">marks: <b>›</b> <b>·</b> <b>–</b> <b>¼</b> <b>‡</b> <b>→</b></div>
+  </div>
+</section>
+
+<section>
+  <div class="head"><h2>this device's own</h2><span class="tag">the fallback everything ends in</span></div>
+  <div class="f-sys">
+    <div class="crumb">Cythera Data › Components › Actors › Magpie</div>
+    <div class="lede">A patch is a Delver Archive carrying the same scenario header as this file.</div>
+    <div class="body">The words the scripts are written in come from the application's resource fork; the compiled form the engine runs is subindex 3. Every action a file can name except Continue and Debug is a script a scenario can rewrite.</div>
+    <table>
+      <tr><th>skill</th><th>rank</th><th>base</th></tr>
+      <tr><td>melee</td><td class="n">14</td><td class="n">0x0E</td></tr>
+      <tr><td>archery</td><td class="n">9</td><td class="n">0x09</td></tr>
+      <tr><td>stealth</td><td class="n">22</td><td class="n">0x16</td></tr>
+    </table>
+    <div class="small">NFNT 25740, 16×14 cell, ascent 12, 24 letters drawn</div>
+    <div class="mono11">ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</div>
+    <div class="marks">marks: <b>›</b> <b>·</b> <b>–</b> <b>¼</b> <b>‡</b> <b>→</b></div>
+  </div>
+</section>
+
+<section class="roles">
+  <div class="head"><h2>the split the game's own styles make</h2><span class="tag">Chicago for chrome, Carthage where the data file says Geneva</span></div>
+  <div class="crumb">Cythera Data › Components › Actors › Magpie</div>
+  <div class="lede">A patch is a Delver Archive carrying the same scenario header as this file.</div>
+  <div class="body">The words the scripts are written in come from the application's resource fork; the compiled form the engine runs is subindex 3. Every action a file can name except Continue and Debug is a script a scenario can rewrite.</div>
+  <table>
+    <tr><th>skill</th><th>rank</th><th>base</th></tr>
+    <tr><td>melee</td><td class="n">14</td><td class="n">0x0E</td></tr>
+    <tr><td>archery</td><td class="n">9</td><td class="n">0x09</td></tr>
+    <tr><td>stealth</td><td class="n">22</td><td class="n">0x16</td></tr>
+  </table>
+  <div class="small">NFNT 25740, 16×14 cell, ascent 12, 24 letters drawn</div>
+  <div class="mono11">ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789</div>
+</section>
+
+<section>
+  <div class="head"><h2>Chicago with Carthage behind it</h2><span class="tag">the smallest change: the marks Chicago lacks fall to a Mac face, not to Helvetica</span></div>
+  <div class="f-chicarth">
+    <div class="crumb">Cythera Data › Components › Actors › Magpie</div>
+    <div class="body">34 angle quotes, 18 middots and 16 en dashes are set in something else today. Carthage carries the first two: <b>›</b> and <b>·</b>. The en dash <b>–</b> is in neither and still falls through.</div>
+  </div>
+</section>
+
+<footer>
+The data file's own styles: Sys Large and Lang0 are ArgosANouveau; Labels, Stats and Text are Geneva 9, 9 and 10; the runes are Seldane 10, 12 and 18. The application's fallback set is Chicago 12, Geneva 9 and 10, Espy Sans 10 to 18. Carthage Sans is Brian Connors's reimagining of Espy Sans, dual licensed OFL and CC-BY-SA 4.0.
+</footer>
+
+</body>
+</html>
